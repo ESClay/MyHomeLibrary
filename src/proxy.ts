@@ -8,6 +8,6 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Skip static assets, the PWA manifest and icons.
-    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|apple-icon|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|apple-icon|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|wasm)$).*)",
   ],
 };

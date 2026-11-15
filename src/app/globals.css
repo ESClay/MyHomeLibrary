@@ -341,3 +341,41 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Barcode scanner: a brass line sweeps the guide; a flash confirms a scan. Both rest under reduced motion. */
+@keyframes scan-sweep {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(calc(var(--scan-h, 8rem) - 2px));
+  }
+}
+
+@keyframes scan-flash {
+  from {
+    opacity: 0.85;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.scan-sweep {
+  animation: scan-sweep 2.4s var(--ease) infinite;
+}
+
+.scan-flash {
+  animation: scan-flash 420ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-sweep {
+    animation: none;
+    transform: translateY(calc(var(--scan-h, 8rem) / 2));
+  }
+  .scan-flash {
+    animation-duration: 1ms;
+  }
+}

@@ -22,13 +22,13 @@ async function fetchMetadata(params: string, signal?: AbortSignal): Promise<Book
   return body.results;
 }
 
-export function AddBook({ libraryId }: { libraryId: string }) {
+export function AddBook({ libraryId, manualIsbn = null }: { libraryId: string; manualIsbn?: string | null }) {
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [results, setResults] = useState<BookMetadata[]>([]);
   const [searched, setSearched] = useState("");
   const [picking, setPicking] = useState<number | string | null>(null);
-  const [sheet, setSheet] = useState<{ candidate: BookMetadata | null } | null>(null);
+  const [sheet, setSheet] = useState<{ candidate: BookMetadata | null; isbn?: string } | null>(manualIsbn ? { candidate: null, isbn: manualIsbn } : null);
   const abort = useRef<AbortController | null>(null);
   const router = useRouter();
   const listId = useId();
@@ -218,7 +218,7 @@ export function AddBook({ libraryId }: { libraryId: string }) {
         </Button>
       </div>
 
-      {sheet && <ConfirmSheet key={sheet.candidate?.isbn13 ?? sheet.candidate?.title ?? "manual"} libraryId={libraryId} candidate={sheet.candidate} onClose={() => setSheet(null)} />}
+      {sheet && <ConfirmSheet key={sheet.candidate?.isbn13 ?? sheet.candidate?.title ?? "manual"} libraryId={libraryId} candidate={sheet.candidate} initialIsbn={sheet.isbn} onClose={() => setSheet(null)} />}
     </div>
   );
 }

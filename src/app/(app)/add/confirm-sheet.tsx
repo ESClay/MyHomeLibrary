@@ -28,18 +28,21 @@ import { cn } from "@/lib/utils";
 export function ConfirmSheet({
   libraryId,
   candidate,
+  initialIsbn,
   onClose,
 }: {
   libraryId: string;
   /** null = manual entry */
   candidate: BookMetadata | null;
+  /** Prefills the ISBN of a by-hand entry (from a scan the lookup could not find). */
+  initialIsbn?: string;
   onClose: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const manual = candidate === null;
 
-  const [draft, setDraft] = useState<BookDraft>(candidate ? draftFromMetadata(candidate) : emptyBookDraft);
+  const [draft, setDraft] = useState<BookDraft>(candidate ? draftFromMetadata(candidate) : { ...emptyBookDraft, isbn13: initialIsbn ?? "" });
   const [ownership, setOwnership] = useState<Ownership>("owned");
   const [copy, setCopy] = useState<CopyDraft>(emptyCopyDraft);
   const [myStatus, setMyStatus] = useState<Status | "">("");
