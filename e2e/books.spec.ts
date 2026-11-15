@@ -40,3 +40,39 @@ test("add a book by hand, open it, rate it and see the rating stick", async ({ p
   await page.goto(`/library?q=${encodeURIComponent(title)}`);
   await expect(page.getByRole("link", { name: new RegExp(title) })).toBeVisible();
 });
+
+test("typing in Add shows suggestions and picking an online match opens the confirm sheet", async ({ page }) => {
+  await page.goto("/sign-in");
+  await page.getByLabel("Email").fill(email!);
+  await page.getByLabel("Password").fill(password!);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.waitForURL("**/library");
+
+  await page.goto("/add");
+  const box = page.getByRole("combobox", { name: "Title, author or ISBN" });
+  await box.fill("du");
+  await expect(box).toHaveAttribute("aria-expanded", "false");
+
+  await box.fill("dune herbert");
+  const options = page.getByRole("option");
+  await expect(options.first()).toBeVisible();
+  await expect(box).toHaveAttribute("aria-expanded", "true");
+
+  // Keyboard: arrows move through options and focus stays in the input.
+  await box.press("ArrowDown");
+  await expect(box).toHaveAttribute("aria-activedescendant", /-opt-0$/);
+  await expect(box).toBeFocused();
+
+  // Escape closes the list without clearing the input.
+  await box.press("Escape");
+  await expect(box).toHaveAttribute("aria-expanded", "false");
+  await expect(box).toHaveValue("dune herbert");
+
+  // Clearing hides suggestions; retyping brings them back and an online match opens the confirm sheet.
+  await box.fill("");
+  await expect(options).toHaveCount(0);
+  await box.fill("dune herbert");
+  const online = page.getByRole("group", { name: "Online matches" }).getByRole("option").first();
+  await online.click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
