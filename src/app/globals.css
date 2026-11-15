@@ -379,3 +379,26 @@
     animation-duration: 1ms;
   }
 }
+
+/* Photo recognition: a brass line sweeps down the photo while it is read. It rests mid-photo under reduced motion. */
+@keyframes read-sweep {
+  0%,
+  100% {
+    top: 0;
+  }
+  50% {
+    top: calc(100% - 2px);
+  }
+}
+
+.read-sweep {
+  top: 0;
+  animation: read-sweep 2.8s var(--ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .read-sweep {
+    animation: none;
+    top: 50%;
+  }
+}

@@ -72,7 +72,7 @@ async function saveOne(libraryId: string, item: TrayItem, r: Resolved): Promise<
   return res.duplicates?.length ? "Already in your library." : res.error;
 }
 
-function Segmented({ value, onChange, label }: { value: Ownership; onChange: (o: Ownership) => void; label: string }) {
+export function Segmented({ value, onChange, label }: { value: Ownership; onChange: (o: Ownership) => void; label: string }) {
   return (
     <fieldset className="flex flex-col gap-2">
       <legend className="mb-1 text-sm font-semibold">{label}</legend>

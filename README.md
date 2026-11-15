@@ -60,6 +60,13 @@ Requires Node 20.19+ and npm.
 2. Add the environment variables from `.env.example` under *Project Settings > Environment Variables*.
 3. Deploy, then add the production URL and `https://<domain>/auth/callback` to the Supabase redirect URLs (step 4 above).
 
+## Photo recognition (Add > Photograph covers)
+
+- Needs `ANTHROPIC_API_KEY`. The model is set in one place (`IDENTIFY_MODEL` in `src/lib/ai/identify.ts`). Each person gets 50 photo reads per rolling 24 hours (`DAILY_SCAN_CAP` in `src/lib/scan/photo.ts`); token usage per job is stored on `scan_jobs`.
+- Photos go to the private `scans` bucket (`<library_id>/<user_id>/<uuid>.jpg`) and are deleted through the Storage API once the review is saved or discarded, or when the person leaves the page (best effort).
+- Safety net: `GET /api/cron/scan-cleanup` (header `Authorization: Bearer $CRON_SECRET`, needs `SUPABASE_SERVICE_ROLE_KEY`) removes photos older than 24 hours that were never cleared. It is not in `vercel.json` yet; schedule it daily, for example `{"crons":[{"path":"/api/cron/scan-cleanup","schedule":"0 4 * * *"}]}`.
+- `/api/scan/[id]` sets `maxDuration = 300`, which Vercel honours up to your plan's limit.
+
 ## Project layout
 
 - `src/app/(auth)/` sign-in, sign-up and `/invite/[token]`; `src/app/auth/callback` OAuth/email callback

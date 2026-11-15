@@ -3,7 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseEnv } from "./env";
 
 /** Paths reachable without a session. Everything else requires sign-in. */
-const PUBLIC_PREFIXES = ["/sign-in", "/sign-up", "/auth", "/invite"];
+// /api/cron has no session: it checks the CRON_SECRET bearer token itself.
+const PUBLIC_PREFIXES = ["/sign-in", "/sign-up", "/auth", "/invite", "/api/cron"];
 
 function isPublic(pathname: string) {
   return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));

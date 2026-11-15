@@ -7,7 +7,7 @@
 -- dave (owns Lib B; accepts an invite into Lib A mid-file),
 -- eve (member of nothing, ever).
 begin;
-select plan(40);
+select plan(57);
 
 -- ---------------------------------------------------------------- fixtures
 insert into auth.users (id, aud, role, email) values
@@ -207,6 +207,80 @@ select ok(exists (
 select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
 select is(public.can_edit_cover_path('10000000-0000-0000-0000-00000000000a/x.jpg', 'b0000000-0000-0000-0000-000000000002'),
   true, 'editor can edit (so delete) covers in their library');
+reset role;
+
+-- ------------------------------------------------- scans bucket + scan_jobs (phase 3b)
+-- As with covers, objects are never deleted from storage tables here (hosted Supabase blocks it);
+-- the delete policy is checked through pg_policies and the path helper instead.
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select lives_ok(
+  $$insert into storage.objects (bucket_id, name, owner) values
+    ('scans', '10000000-0000-0000-0000-00000000000a/b0000000-0000-0000-0000-000000000002/photo.jpg', 'b0000000-0000-0000-0000-000000000002')$$,
+  'member can upload a scan under <library>/<own id>/');
+select throws_ok(
+  $$insert into storage.objects (bucket_id, name, owner) values
+    ('scans', '10000000-0000-0000-0000-00000000000a/a0000000-0000-0000-0000-000000000001/photo.jpg', 'b0000000-0000-0000-0000-000000000002')$$,
+  '42501', null, 'member cannot upload into another user''s scan folder');
+select throws_ok(
+  $$insert into storage.objects (bucket_id, name, owner) values
+    ('scans', '10000000-0000-0000-0000-00000000000b/b0000000-0000-0000-0000-000000000002/photo.jpg', 'b0000000-0000-0000-0000-000000000002')$$,
+  '42501', null, 'member cannot upload a scan under a library they do not belong to');
+select is((select count(*)::int from storage.objects
+  where bucket_id = 'scans' and name = '10000000-0000-0000-0000-00000000000a/b0000000-0000-0000-0000-000000000002/photo.jpg'),
+  1, 'the owner can read their scan');
+select is(public.owns_scan_path('10000000-0000-0000-0000-00000000000a/b0000000-0000-0000-0000-000000000002/x.jpg', 'b0000000-0000-0000-0000-000000000002'), true, 'own path under own library is accepted');
+select is(public.owns_scan_path('10000000-0000-0000-0000-00000000000a/a0000000-0000-0000-0000-000000000001/x.jpg', 'b0000000-0000-0000-0000-000000000002'), false, 'another user''s folder is refused');
+select is(public.owns_scan_path('not-a-uuid/b0000000-0000-0000-0000-000000000002/x.jpg', 'b0000000-0000-0000-0000-000000000002'), false, 'a path that does not start with a library id is refused');
+reset role;
+
+select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
+select is((select count(*)::int from storage.objects
+  where bucket_id = 'scans' and name = '10000000-0000-0000-0000-00000000000a/b0000000-0000-0000-0000-000000000002/photo.jpg'),
+  0, 'another member of the library cannot read someone else''s scan');
+reset role;
+
+select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
+select throws_ok(
+  $$insert into storage.objects (bucket_id, name, owner) values
+    ('scans', '10000000-0000-0000-0000-00000000000a/e0000000-0000-0000-0000-000000000005/photo.jpg', 'e0000000-0000-0000-0000-000000000005')$$,
+  '42501', null, 'a non-member cannot upload a scan');
+reset role;
+
+select ok(exists (
+  select 1 from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'scans_delete'
+    and cmd = 'DELETE' and qual like '%owns_scan_path%'),
+  'scans delete policy exists and is gated by owns_scan_path');
+select is((select count(*)::int from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname like 'scans\_%' and cmd in ('UPDATE', 'ALL')),
+  0, 'scans has no update policy: a photo is written once');
+select ok((select not public and file_size_limit = 10485760 from storage.buckets where id = 'scans'),
+  'scans bucket is private with a 10 MB limit');
+
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select lives_ok(
+  $$insert into public.scan_jobs (library_id, photo_path) values
+    ('10000000-0000-0000-0000-00000000000a', '10000000-0000-0000-0000-00000000000a/b0000000-0000-0000-0000-000000000002/photo.jpg')$$,
+  'editor can create their own scan job');
+select throws_ok(
+  $$insert into public.scan_jobs (user_id, library_id, photo_path) values
+    ('a0000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000a', '10000000-0000-0000-0000-00000000000a/a0000000-0000-0000-0000-000000000001/photo.jpg')$$,
+  '42501', null, 'cannot create a scan job for someone else');
+select throws_ok(
+  $$insert into public.scan_jobs (library_id, photo_path) values ('10000000-0000-0000-0000-00000000000a', 'somewhere/else.jpg')$$,
+  '23514', null, 'scan job photo path must sit under <library>/<user>/');
+reset role;
+
+select pg_temp.act_as('c0000000-0000-0000-0000-000000000003');
+select throws_ok(
+  $$insert into public.scan_jobs (library_id, photo_path) values
+    ('10000000-0000-0000-0000-00000000000a', '10000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-000000000003/photo.jpg')$$,
+  '42501', null, 'viewer cannot create a scan job');
+reset role;
+
+select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
+select is((select count(*)::int from public.scan_jobs where photo_path = '10000000-0000-0000-0000-00000000000a/b0000000-0000-0000-0000-000000000002/photo.jpg'),
+  0, 'scan jobs are private to the user who made them');
 reset role;
 
 select finish();
