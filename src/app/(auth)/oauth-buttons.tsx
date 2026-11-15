@@ -26,14 +26,14 @@ export function OAuthButtons({ next }: { next: string }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <Button type="button" variant="outline" size="lg" className="h-10" onClick={() => signInWith("google")}>
+      <Button type="button" variant="outline" size="lg" onClick={() => signInWith("google")}>
         Continue with Google
       </Button>
-      <Button type="button" variant="outline" size="lg" className="h-10" onClick={() => signInWith("apple")}>
+      <Button type="button" variant="outline" size="lg" onClick={() => signInWith("apple")}>
         Continue with Apple
       </Button>
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="rounded-lg border border-destructive/40 px-3 py-2 text-sm text-destructive">
           {error}
         </p>
       )}

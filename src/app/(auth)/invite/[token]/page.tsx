@@ -21,19 +21,22 @@ export default async function InvitePage({
   }
 
   return (
-    <div className="flex flex-col gap-6 text-center">
-      <h1 className="text-2xl font-semibold">You&apos;ve been invited</h1>
-      <p className="text-sm text-muted-foreground">
-        Join the shared library as {data.user.email}.
-      </p>
+    <div className="flex flex-col gap-6">
+      <div className="rise flex flex-col gap-2">
+        <p className="eyebrow text-gilt">An invitation</p>
+        <h1 className="page-title">You&apos;ve been invited</h1>
+        <p className="text-base text-muted-foreground">
+          Join the shared library as <span className="font-medium text-foreground">{data.user.email}</span>.
+        </p>
+      </div>
       {typeof error === "string" && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="rounded-lg border border-destructive/40 px-3 py-2 text-sm text-destructive">
           {error}
         </p>
       )}
       <form action={acceptInvite}>
         <input type="hidden" name="token" value={token} />
-        <Button type="submit" size="lg" className="h-10 w-full">
+        <Button type="submit" size="lg" className="w-full">
           Join library
         </Button>
       </form>

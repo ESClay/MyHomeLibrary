@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/shelf";
 import { getLibraryContext } from "@/lib/library";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "../../(auth)/actions";
@@ -40,7 +41,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
-      <h1 className="text-2xl font-semibold">Settings</h1>
+      <PageHeader eyebrow="Profile" title="Settings" />
 
       <Card>
         <CardHeader>
@@ -52,14 +53,14 @@ export default async function SettingsPage() {
               <input type="hidden" name="libraryId" value={current.id} />
               <div className="flex flex-1 flex-col gap-2">
                 <Label htmlFor="rename">Name</Label>
-                <Input id="rename" name="name" defaultValue={current.name} required maxLength={100} className="h-10 text-base" />
+                <Input id="rename" name="name" defaultValue={current.name} required maxLength={100} />
               </div>
-              <Button type="submit" className="h-10">
+              <Button type="submit">
                 Rename
               </Button>
             </form>
           ) : (
-            <p>{current.name}</p>
+            <p className="font-display text-lg">{current.name}</p>
           )}
         </CardContent>
       </Card>
@@ -69,12 +70,18 @@ export default async function SettingsPage() {
           <CardTitle>Members</CardTitle>
         </CardHeader>
         <CardContent>
-          <ul className="flex flex-col divide-y">
+          <ul className="flex flex-col divide-y divide-border">
             {(members ?? []).map((m) => {
               const profile = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
               return (
-                <li key={m.user_id} className="flex items-center justify-between gap-3 py-2">
-                  <div className="min-w-0">
+                <li key={m.user_id} className="flex items-center justify-between gap-3 py-3">
+                  <span
+                    aria-hidden
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent font-display text-lg text-accent-foreground"
+                  >
+                    {(profile?.display_name ?? profile?.email ?? "?").charAt(0).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
                     <p className="truncate font-medium">
                       {profile?.display_name ?? profile?.email ?? "Member"}
                       {m.user_id === user.id && " (you)"}
@@ -109,10 +116,10 @@ export default async function SettingsPage() {
             <InviteForm libraryId={current.id} />
             {(invites ?? []).length > 0 && (
               <div className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium">Pending invites</h3>
-                <ul className="flex flex-col divide-y">
+                <h3 className="eyebrow">Pending invites</h3>
+                <ul className="flex flex-col divide-y divide-border">
                   {(invites ?? []).map((inv) => (
-                    <li key={inv.id} className="flex flex-col gap-2 py-2">
+                    <li key={inv.id} className="flex flex-col gap-2 py-3">
                       <p className="truncate text-sm">
                         {inv.email} <Badge variant="secondary">{inv.role}</Badge>
                       </p>
@@ -150,7 +157,7 @@ export default async function SettingsPage() {
         <CardContent className="flex flex-col gap-3">
           <p className="truncate text-sm text-muted-foreground">{user.email}</p>
           <form action={signOut}>
-            <Button type="submit" variant="outline" className="h-10">
+            <Button type="submit" variant="outline">
               Sign out
             </Button>
           </form>
