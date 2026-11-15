@@ -1,15 +1,21 @@
 -- RLS test plan (pgTAP). Run with `npx supabase test db` against a local stack.
+-- It can also run against a hosted project; it then must assume real data exists
+-- (so counts only look at the fixture rows) and that hosted-only triggers are active
+-- (e.g. storage.protect_delete(), so nothing deletes from storage tables directly).
+-- Everything runs in one transaction that is rolled back.
 -- Fixtures: alice (owner of Lib A), bob (editor of Lib A), carol (viewer of Lib A),
--- dave (member of nothing; owns Lib B).
+-- dave (owns Lib B; accepts an invite into Lib A mid-file),
+-- eve (member of nothing, ever).
 begin;
-select plan(25);
+select plan(40);
 
 -- ---------------------------------------------------------------- fixtures
 insert into auth.users (id, aud, role, email) values
   ('a0000000-0000-0000-0000-000000000001', 'authenticated', 'authenticated', 'alice@example.com'),
   ('b0000000-0000-0000-0000-000000000002', 'authenticated', 'authenticated', 'bob@example.com'),
   ('c0000000-0000-0000-0000-000000000003', 'authenticated', 'authenticated', 'carol@example.com'),
-  ('d0000000-0000-0000-0000-000000000004', 'authenticated', 'authenticated', 'dave@example.com');
+  ('d0000000-0000-0000-0000-000000000004', 'authenticated', 'authenticated', 'dave@example.com'),
+  ('e0000000-0000-0000-0000-000000000005', 'authenticated', 'authenticated', 'eve@example.com');
 
 insert into public.libraries (id, name, owner_id) values
   ('10000000-0000-0000-0000-00000000000a', 'Lib A', 'a0000000-0000-0000-0000-000000000001'),
@@ -55,7 +61,10 @@ select is(
     where library_id = '10000000-0000-0000-0000-00000000000a'
       and user_id = 'a0000000-0000-0000-0000-000000000001'),
   'owner', 'creating a library adds the creator as owner');
-select is((select count(*)::int from public.profiles), 4, 'profiles are created on signup');
+select is((select count(*)::int from public.profiles where id in (
+  'a0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000002',
+  'c0000000-0000-0000-0000-000000000003', 'd0000000-0000-0000-0000-000000000004',
+  'e0000000-0000-0000-0000-000000000005')), 5, 'profiles are created on signup for all five fixture users');
 
 -- ------------------------------------------------- non-member isolation (dave)
 select pg_temp.act_as('d0000000-0000-0000-0000-000000000004');
@@ -126,6 +135,78 @@ select is(public.accept_invite('good-token'), '10000000-0000-0000-0000-000000000
 select is(public.library_role('10000000-0000-0000-0000-00000000000a', 'd0000000-0000-0000-0000-000000000004')::text,
   'viewer', 'accepting an invite creates the membership with the invited role');
 select throws_ok($$select public.accept_invite('good-token')$$, 'P0001', 'Invite already used', 'invite cannot be reused');
+reset role;
+
+
+-- ------------------------------------------------------------ reads (phase 2)
+reset role;
+insert into public.reads (user_id, book_id, started_at, finished_at) values
+  ('a0000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-00000000000a', '2026-01-01', '2026-01-10');
+
+select pg_temp.act_as('c0000000-0000-0000-0000-000000000003');
+select is((select count(*)::int from public.reads where book_id = '20000000-0000-0000-0000-00000000000a'),
+  1, 'members can read each other''s reads');
+select is(pg_temp.affected($$update public.reads set finished_at = '2026-02-01'$$),
+  0, 'member cannot edit another member''s reads');
+select is(pg_temp.affected($$delete from public.reads$$), 0, 'member cannot delete another member''s reads');
+select throws_ok(
+  $$insert into public.reads (user_id, book_id) values
+    ('a0000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-00000000000a')$$,
+  '42501', null, 'member cannot insert a read for another member');
+select lives_ok(
+  $$insert into public.reads (user_id, book_id, started_at) values
+    ('c0000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-00000000000a', '2026-03-01')$$,
+  'member can add their own read (viewers keep personal data)');
+select throws_ok(
+  $$insert into public.reads (user_id, book_id) values
+    ('c0000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-00000000000b')$$,
+  '42501', null, 'cannot add a read to a book in a library you are not in');
+select throws_ok(
+  $$insert into public.reads (user_id, book_id, started_at, finished_at) values
+    ('c0000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-00000000000a', '2026-05-02', '2026-05-01')$$,
+  '23514', null, 'finish date cannot precede start date');
+select throws_ok(
+  $$insert into public.user_books (user_id, book_id, rating) values
+    ('c0000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-00000000000a', 4.3)$$,
+  '23514', null, 'ratings must be in half-star steps');
+reset role;
+
+select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
+select is((select count(*)::int from public.reads), 0, 'non-members cannot read reads of other libraries');
+reset role;
+
+-- ------------------------------------------------- covers bucket (phase 2)
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select lives_ok(
+  $$insert into storage.objects (bucket_id, name, owner) values
+    ('covers', '10000000-0000-0000-0000-00000000000a/cover.jpg', 'b0000000-0000-0000-0000-000000000002')$$,
+  'editor can upload a cover under their library prefix');
+select throws_ok(
+  $$insert into storage.objects (bucket_id, name, owner) values
+    ('covers', '10000000-0000-0000-0000-00000000000b/cover.jpg', 'b0000000-0000-0000-0000-000000000002')$$,
+  '42501', null, 'editor cannot upload under another library''s prefix');
+reset role;
+
+select pg_temp.act_as('c0000000-0000-0000-0000-000000000003');
+select throws_ok(
+  $$insert into storage.objects (bucket_id, name, owner) values
+    ('covers', '10000000-0000-0000-0000-00000000000a/viewer.jpg', 'c0000000-0000-0000-0000-000000000003')$$,
+  '42501', null, 'viewer cannot upload covers');
+select is(public.can_edit_cover_path('10000000-0000-0000-0000-00000000000a/x.jpg', 'c0000000-0000-0000-0000-000000000003'),
+  false, 'viewer cannot edit (so not delete) covers in their library');
+reset role;
+
+-- Direct deletes from storage tables are blocked on hosted Supabase (storage.protect_delete()),
+-- so the delete policy is verified through its catalog entry and its helper function.
+select ok(exists (
+  select 1 from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'covers_delete'
+    and cmd = 'DELETE' and qual like '%can_edit_cover_path%'),
+  'covers delete policy exists and is gated by can_edit_cover_path');
+
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select is(public.can_edit_cover_path('10000000-0000-0000-0000-00000000000a/x.jpg', 'b0000000-0000-0000-0000-000000000002'),
+  true, 'editor can edit (so delete) covers in their library');
 reset role;
 
 select finish();

@@ -1,0 +1,45 @@
+{
+  "_note": "Hand-written from the documented Typesense book fields (title, author_names, image, isbns, rating, ratings_count, featured_series, series_names, release_year). Not recorded from the live API. The shape of featured_series is a guess.",
+  "data": {
+    "search": {
+      "results": {
+        "found": 2,
+        "hits": [
+          {
+            "document": {
+              "id": "312460",
+              "title": "Dune",
+              "subtitle": "",
+              "author_names": ["Frank Herbert"],
+              "image": { "url": "https://assets.hardcover.app/books/312460/dune-main.jpg" },
+              "isbns": ["0441172717", "9780441172719", "9780593099322"],
+              "pages": 658,
+              "rating": 4.31,
+              "ratings_count": 126481,
+              "release_year": 1965,
+              "series_names": ["Dune"],
+              "featured_series": { "series_name": "Dune", "position": 1 },
+              "featured_series_position": 1,
+              "genres": ["Science Fiction", "Fantasy", "Classics"],
+              "description": "A boy on a desert planet."
+            }
+          },
+          {
+            "document": {
+              "id": "99",
+              "title": "Dune Messiah",
+              "author_names": ["Frank Herbert"],
+              "image": null,
+              "isbns": [],
+              "rating": 0,
+              "ratings_count": 0,
+              "release_year": 1969,
+              "series_names": ["Dune"],
+              "featured_series_position": 2
+            }
+          }
+        ]
+      }
+    }
+  }
+}

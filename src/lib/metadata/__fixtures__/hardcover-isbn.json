@@ -1,0 +1,39 @@
+{
+  "_note": "Hand-written from the documented Hardcover schema (editions, books, contributions, featured_book_series, cached_tags, cached_image). Not recorded from the live API (no token was available).",
+  "data": {
+    "editions": [
+      {
+        "id": 30404651,
+        "title": "Dune",
+        "isbn_10": "0441172717",
+        "isbn_13": "9780441172719",
+        "pages": 612,
+        "release_date": "2005-08-02",
+        "cached_image": { "url": "https://assets.hardcover.app/edition/30404651/dune-cover.jpg", "width": 400, "height": 600 },
+        "book": {
+          "id": 312460,
+          "title": "Dune",
+          "subtitle": null,
+          "description": "<p>Set on the desert planet <b>Arrakis</b>, Dune is the story of the boy Paul Atreides.</p>",
+          "pages": 658,
+          "release_date": "1965-08-01",
+          "rating": 4.3149,
+          "ratings_count": 126481,
+          "cached_image": { "url": "https://assets.hardcover.app/books/312460/dune-main.jpg" },
+          "cached_tags": {
+            "Genre": [
+              { "tag": "Science Fiction", "tagSlug": "science-fiction", "count": 4100 },
+              { "tag": "Fantasy", "tagSlug": "fantasy", "count": 900 }
+            ],
+            "Mood": [{ "tag": "Adventurous", "tagSlug": "adventurous", "count": 800 }]
+          },
+          "contributions": [
+            { "contribution": null, "author": { "name": "Frank Herbert" } },
+            { "contribution": "Illustrator", "author": { "name": "John Schoenherr" } }
+          ],
+          "featured_book_series": { "position": 1, "series": { "id": 1100, "name": "Dune" } }
+        }
+      }
+    ]
+  }
+}

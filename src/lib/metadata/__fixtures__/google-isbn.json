@@ -1,0 +1,29 @@
+{
+  "kind": "books#volumes",
+  "totalItems": 1,
+  "items": [
+    {
+      "kind": "books#volume",
+      "id": "B1hSG45JCX4C",
+      "volumeInfo": {
+        "title": "Dune",
+        "subtitle": "Deluxe Edition",
+        "authors": ["Frank Herbert"],
+        "publishedDate": "2005-08-02",
+        "description": "<p>Set on the desert planet Arrakis, <b>Dune</b> is the story of Paul Atreides &amp; his family.</p><p>A masterpiece.<br>Truly.</p><script>alert(1)</script>",
+        "industryIdentifiers": [
+          { "type": "ISBN_13", "identifier": "9780441172719" },
+          { "type": "ISBN_10", "identifier": "0441172717" }
+        ],
+        "pageCount": 535,
+        "categories": ["Fiction / Science Fiction / Action & Adventure", "Fiction / Fantasy"],
+        "averageRating": 4.5,
+        "ratingsCount": 380,
+        "imageLinks": {
+          "smallThumbnail": "http://books.google.com/books/content?id=B1hSG45JCX4C&printsec=frontcover&img=1&zoom=5&edge=curl&source=gbs_api",
+          "thumbnail": "http://books.google.com/books/content?id=B1hSG45JCX4C&printsec=frontcover&img=1&zoom=1&edge=curl&source=gbs_api"
+        }
+      }
+    }
+  ]
+}

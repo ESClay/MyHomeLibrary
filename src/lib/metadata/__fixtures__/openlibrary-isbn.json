@@ -1,0 +1,49 @@
+{
+  "ISBN:9780441172719": {
+    "key": "/books/OL59726263M",
+    "title": "Dune",
+    "authors": [
+      {
+        "url": "http://openlibrary.org/authors/OL79034A/Frank_Herbert",
+        "name": "Frank Herbert"
+      }
+    ],
+    "number_of_pages": 896,
+    "identifiers": {
+      "isbn_13": [
+        "9780441172719"
+      ],
+      "openlibrary": [
+        "OL59726263M"
+      ]
+    },
+    "publish_date": "2020",
+    "subjects": [
+      {
+        "name": "Dune (Imaginary place)",
+        "url": "https://openlibrary.org/subjects/dune_(imaginary_place)"
+      },
+      {
+        "name": "Fiction",
+        "url": "https://openlibrary.org/subjects/fiction"
+      },
+      {
+        "name": "Fiction, science fiction, general",
+        "url": "https://openlibrary.org/subjects/fiction,_science_fiction,_general"
+      },
+      {
+        "name": "Dune (imaginary place), fiction",
+        "url": "https://openlibrary.org/subjects/dune_(imaginary_place),_fiction"
+      },
+      {
+        "name": "New York Times reviewed",
+        "url": "https://openlibrary.org/subjects/new_york_times_reviewed"
+      }
+    ],
+    "cover": {
+      "small": "https://covers.openlibrary.org/b/id/15110282-S.jpg",
+      "medium": "https://covers.openlibrary.org/b/id/15110282-M.jpg",
+      "large": "https://covers.openlibrary.org/b/id/15110282-L.jpg"
+    }
+  }
+}
