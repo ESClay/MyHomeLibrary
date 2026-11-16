@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { Locked } from "@/components/locked";
 import { PageHeader } from "@/components/shelf";
+import { hasFullAccess } from "@/lib/access";
 import { canEdit } from "@/lib/books/access";
 import { getLibraryContext } from "@/lib/library";
 import { dailyScanStatus } from "@/lib/scan/jobs";
@@ -25,7 +27,23 @@ export default async function Page() {
     );
   }
 
-  const cap = await dailyScanStatus(await createClient(), user.id);
+  const supabase = await createClient();
+  if (!(await hasFullAccess(supabase, user.id))) {
+    return (
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+        <Link
+          href="/add"
+          className="-ml-2 inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft aria-hidden className="size-4" /> Back to Add a book
+        </Link>
+        <PageHeader eyebrow="New arrivals" title="Photograph covers" />
+        <Locked />
+      </div>
+    );
+  }
+
+  const cap = await dailyScanStatus(supabase, user.id);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">

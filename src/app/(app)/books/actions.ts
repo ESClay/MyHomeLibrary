@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/library";
 import { createClient } from "@/lib/supabase/server";
 import { findDuplicates, type DuplicateMatch } from "@/lib/duplicates";
+import { providerPolicyFor } from "@/lib/access";
 import { refreshFor } from "@/lib/metadata";
 import { authorizeBook, canEdit, fail, firstIssue, roleInLibrary, type ActionResult } from "@/lib/books/access";
 import { loadDuplicateCandidates } from "@/lib/books/data";
@@ -222,7 +223,7 @@ export async function refreshMetadata(bookId: string): Promise<ActionResult<{ me
   const { data: current } = await auth.supabase.from("books").select("*").eq("id", parsed.data).single();
   if (!current) return fail("That book is not in your library.");
 
-  const fresh = await refreshFor({ title: current.title, authors: current.authors ?? [], isbn13: current.isbn13 });
+  const fresh = await refreshFor({ title: current.title, authors: current.authors ?? [], isbn13: current.isbn13 }, await providerPolicyFor(auth.supabase, auth.user.id));
   if (!fresh) return fail("No provider returned a match. Try again later, or edit the details by hand.");
 
   const patch: Record<string, unknown> = {};

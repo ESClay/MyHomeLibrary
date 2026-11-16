@@ -4,7 +4,8 @@ import { RecommendError } from "@/lib/ai/recommend";
 import { getEbayClient } from "@/lib/pricing/ebay";
 import { recordNoPrice, recordPrice } from "@/lib/pricing/record";
 import { runPriceRefresh, type Candidate } from "@/lib/pricing/refresh";
-import { CapReached, NotEnoughSignal, generateSet } from "@/lib/discover/recs";
+import { grantedLibraryIds, grantedUserIds } from "@/lib/access";
+import { AccessDenied, CapReached, NotEnoughSignal, generateSet } from "@/lib/discover/recs";
 import { syncLibrarySeries } from "@/lib/discover/series-sync";
 import type { RunStore, TaskRunner } from "./daily";
 import { ACTIVE_WINDOW_MS, pickDueTargets, type LastSet, type Membership } from "./rec-targets";
@@ -61,7 +62,7 @@ export function scanCleanupTask(admin: SupabaseClient): TaskRunner {
   };
 }
 
-/** Walks the libraries in id order, re-syncing each one's stale series, until the time runs out (then resumes after the last finished library). */
+/** Walks the libraries in id order, re-syncing the stale series of each one that has a member with full access, until the time runs out (then resumes after the last finished library). */
 export function seriesSyncTask(admin: SupabaseClient): TaskRunner {
   return async ({ deadline, cursor, now }) => {
     let after = (cursor as { after?: string } | null)?.after ?? "";
@@ -69,6 +70,9 @@ export function seriesSyncTask(admin: SupabaseClient): TaskRunner {
     let syncedSeries = 0;
     let linkedBooks = 0;
     const errors: string[] = [];
+    // Hardcover is for libraries with at least one member who has full access; the rest are stepped over.
+    const granted = await grantedLibraryIds(admin);
+    if (granted.size === 0) return { status: "complete", detail: { libraries: 0, syncedSeries: 0, linkedBooks: 0, skipped: "no library has a member with full access" } };
 
     for (;;) {
       const { data, error } = await admin.from("libraries").select("id").gt("id", after).order("id").limit(10);
@@ -76,6 +80,10 @@ export function seriesSyncTask(admin: SupabaseClient): TaskRunner {
       if (!data || data.length === 0) return { status: "complete", detail: { libraries, syncedSeries, linkedBooks, errors: errors.slice(0, 5) } };
 
       for (const lib of data) {
+        if (!granted.has(lib.id as string)) {
+          after = lib.id as string;
+          continue;
+        }
         const left = deadline - now();
         if (left < 15_000) return { status: "partial", cursor: { after }, detail: { libraries, syncedSeries, linkedBooks, reason: "out of time" } };
         const res = await syncLibrarySeries(admin, lib.id as string, { budgetMs: left });
@@ -110,8 +118,9 @@ async function activeUserIds(admin: SupabaseClient, now: number): Promise<Set<st
 export function recommendationsTask(admin: SupabaseClient): TaskRunner {
   return async ({ deadline, now }) => {
     const t0 = now();
-    const active = await activeUserIds(admin, t0);
-    if (active.size === 0) return { status: "complete", detail: { active: 0, generated: 0 } };
+    // Claude is for people with full access: only they get a personal set, and only libraries with one of them a shared set.
+    const [active, granted] = await Promise.all([activeUserIds(admin, t0), grantedUserIds(admin)]);
+    if (active.size === 0 || granted.size === 0) return { status: "complete", detail: { active: active.size, granted: granted.size, generated: 0 } };
 
     const { data: members, error } = await admin.from("library_members").select("user_id, library_id");
     if (error) throw new Error(error.message);
@@ -124,7 +133,7 @@ export function recommendationsTask(admin: SupabaseClient): TaskRunner {
       .in("library_id", libraryIds.length ? libraryIds : ["00000000-0000-0000-0000-000000000000"]);
     const lastSets: LastSet[] = (sets ?? []).map((s) => ({ scope: s.scope, libraryId: s.library_id as string, userId: s.user_id as string | null, generatedAt: s.generated_at as string }));
 
-    const targets = pickDueTargets({ activeUserIds: active, memberships, lastSets, now: t0 });
+    const targets = pickDueTargets({ activeUserIds: active, grantedUserIds: granted, memberships, lastSets, now: t0 });
     let generated = 0;
     let notEnough = 0;
     let tokens = 0;
@@ -147,7 +156,7 @@ export function recommendationsTask(admin: SupabaseClient): TaskRunner {
         generated++;
         tokens += out.usage.inputTokens + out.usage.outputTokens;
       } catch (e) {
-        if (e instanceof NotEnoughSignal || e instanceof CapReached) {
+        if (e instanceof NotEnoughSignal || e instanceof CapReached || e instanceof AccessDenied) {
           notEnough++;
         } else if (e instanceof RecommendError && (e.kind === "config" || e.kind === "busy")) {
           errors.push(e.kind);
@@ -164,11 +173,14 @@ export function recommendationsTask(admin: SupabaseClient): TaskRunner {
 /**
  * Daily price refresh. Selects physical copies with an ISBN that were last priced more than 7 days ago (or never), stalest first,
  * across libraries, skipping libraries with no price_region; see lib/pricing/refresh.ts for the call and time limits.
+ * eBay is for libraries with at least one member who has full access: price_refresh_candidates only returns those
+ * libraries' copies (so the call budget is never spent elsewhere), and the task does nothing when nobody has access.
  */
 export function priceRefreshTask(admin: SupabaseClient): TaskRunner {
   const ebay = getEbayClient();
-  return ({ deadline, cursor, now }) =>
-    runPriceRefresh(
+  return async ({ deadline, cursor, now }) => {
+    if ((await grantedUserIds(admin)).size === 0) return { status: "complete", detail: { skipped: "no one has full access" } };
+    return runPriceRefresh(
       {
         async fetchCandidates(cutoffIso, limit) {
           const { data, error } = await admin.rpc("price_refresh_candidates", { cutoff: cutoffIso, max_rows: limit });
@@ -188,4 +200,5 @@ export function priceRefreshTask(admin: SupabaseClient): TaskRunner {
       },
       { deadline, cursor },
     );
+  };
 }

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { hasFullAccess, libraryHasGrantedMember } from "@/lib/access";
 import { recommendConfigured } from "@/lib/ai/recommend";
 import { personalSignal, sharedSignal } from "@/lib/ai/recommend-prompt";
 import { canEdit } from "@/lib/books/access";
@@ -10,6 +11,7 @@ import { loadSeriesOverview, type SeriesOverview } from "@/lib/discover/series-d
 import type { StoredPick } from "@/lib/discover/types";
 import { hardcoverConfigured } from "@/lib/metadata/hardcover";
 import { createClient } from "@/lib/supabase/server";
+import { Locked } from "@/components/locked";
 import { EmptyState, PageHeader, SpineRow } from "@/components/shelf";
 import { FindSeriesButton, SeriesSection } from "./series-section";
 import { RecSection, type CapView, type ClientPick, type RecState } from "./rec-section";
@@ -68,12 +70,15 @@ function SeriesBody({
   failed,
   canEditLibrary,
   syncConfigured,
+  canSync,
 }: {
   libraryId: string;
   overview: SeriesOverview | null;
   failed: boolean;
   canEditLibrary: boolean;
   syncConfigured: boolean;
+  /** Whether this person may start a series sync (full access). Without it they still see what others have synced. */
+  canSync: boolean;
 }) {
   if (failed || !overview) {
     return <p className="text-base text-muted-foreground">The series list could not be loaded. Refresh the page to try again.</p>;
@@ -81,7 +86,9 @@ function SeriesBody({
   const { gaps, unsynced, withSeriesText, completeCount } = overview;
   const withGaps = gaps.filter((g) => g.missing.length > 0 || g.pending);
 
-  const syncNote = !syncConfigured ? (
+  const syncNote = !canSync ? (
+    <Locked variant="inline" />
+  ) : !syncConfigured ? (
     <p className="text-sm text-muted-foreground">Series lookup is not set up on this server yet, so new series cannot be fetched and existing ones cannot be refreshed.</p>
   ) : null;
 
@@ -105,10 +112,10 @@ function SeriesBody({
           <p className="text-base">
             {unsynced} book{unsynced === 1 ? "" : "s"} {unsynced === 1 ? "belongs" : "belong"} to a series that has not been looked up yet.
           </p>
-          {syncConfigured ? <FindSeriesButton libraryId={libraryId} /> : syncNote}
+          {canSync && syncConfigured ? <FindSeriesButton libraryId={libraryId} /> : syncNote}
         </div>
       )}
-      {withGaps.length > 0 && <SeriesSection libraryId={libraryId} gaps={withGaps} canEdit={canEditLibrary} canRefresh={syncConfigured} />}
+      {withGaps.length > 0 && <SeriesSection libraryId={libraryId} gaps={withGaps} canEdit={canEditLibrary} canRefresh={syncConfigured && canSync} />}
       {withGaps.length === 0 && unsynced === 0 && (
         <p className="text-base text-muted-foreground">
           {completeCount > 0 ? `Nothing missing. ${completeCount === 1 ? "Your series is" : `All ${completeCount} of your series are`} complete as far as released books go.` : "Nothing missing right now."}
@@ -133,6 +140,10 @@ export default async function Page() {
   const editor = canEdit(current.role);
   const syncConfigured = hardcoverConfigured() && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
   const recsOn = recommendConfigured();
+  // Claude and Hardcover are for people with full access. Without it, an existing shared set and the series that a granted
+  // member of the library has already synced are still shown; everything that would call out is locked.
+  const fullAccess = await hasFullAccess(supabase, user.id);
+  const seriesAvailable = fullAccess || (await libraryHasGrantedMember(current.id));
 
   let overview: SeriesOverview | null = null;
   let seriesFailed = false;
@@ -192,15 +203,27 @@ export default async function Page() {
       <PageHeader eyebrow="What to read next" title="Discover" lede="Fill the gaps in the series you own, then find something new." />
 
       <SectionPanel index={1} title="Complete your series" lede="Volumes missing from the series on your shelves. Unreleased books and box sets are left out.">
-        <SeriesBody libraryId={current.id} overview={overview} failed={seriesFailed} canEditLibrary={editor} syncConfigured={syncConfigured} />
+        {seriesAvailable ? (
+          <SeriesBody libraryId={current.id} overview={overview} failed={seriesFailed} canEditLibrary={editor} syncConfigured={syncConfigured} canSync={fullAccess} />
+        ) : (
+          <Locked />
+        )}
       </SectionPanel>
 
       <SectionPanel index={2} title="For you" lede="Picks based on what you have rated, finished and written about, each with the reason it was chosen.">
-        <RecSection libraryId={current.id} scope="personal" state={personalState} picks={personal.picks} updatedAt={personal.updatedAt} updatedLabel={personal.updatedLabel} cap={personal.cap} canEdit={editor} />
+        {fullAccess ? (
+          <RecSection libraryId={current.id} scope="personal" state={personalState} picks={personal.picks} updatedAt={personal.updatedAt} updatedLabel={personal.updatedLabel} cap={personal.cap} canEdit={editor} />
+        ) : (
+          <Locked />
+        )}
       </SectionPanel>
 
       <SectionPanel index={3} title="For both of you" lede="Books the two of you would likely both enjoy, based on your ratings. Your notes are never used here.">
-        <RecSection libraryId={current.id} scope="shared" state={sharedState} picks={shared.picks} updatedAt={shared.updatedAt} updatedLabel={shared.updatedLabel} cap={shared.cap} canEdit={editor} />
+        {fullAccess || shared.picks.length > 0 ? (
+          <RecSection libraryId={current.id} scope="shared" state={sharedState} picks={shared.picks} updatedAt={shared.updatedAt} updatedLabel={shared.updatedLabel} cap={shared.cap} canEdit={editor} readOnly={!fullAccess} />
+        ) : (
+          <Locked />
+        )}
       </SectionPanel>
     </div>
   );

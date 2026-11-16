@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { RecommendError, recommendConfigured } from "@/lib/ai/recommend";
 import { canEdit, fail, firstIssue, roleInLibrary, type ActionResult } from "@/lib/books/access";
+import { fullAccessDenied, hasFullAccess } from "@/lib/access";
 import { requireUser } from "@/lib/library";
-import { CapReached, NotEnoughSignal, generateSet, latestSets } from "@/lib/discover/recs";
+import { AccessDenied, CapReached, NotEnoughSignal, generateSet, latestSets } from "@/lib/discover/recs";
 import { syncLibrarySeries } from "@/lib/discover/series-sync";
 import { entryToMetadata, createInputFromMetadata } from "@/lib/discover/to-book";
 import type { StoredPick } from "@/lib/discover/types";
@@ -36,6 +37,8 @@ export async function refreshSeries(input: { libraryId: string; seriesId?: strin
   if (!parsed.success) return fail(firstIssue(parsed.error));
   const who = await member(parsed.data.libraryId);
   if (!who.ok) return fail(who.error);
+  // Series sync calls Hardcover: full access only. (The cron syncs libraries that have a granted member.)
+  if (!(await hasFullAccess(await createClient(), who.user.id))) return fullAccessDenied();
 
   if (!hardcoverConfigured()) return fail("Series lookup is not set up on this server yet (no Hardcover token).");
   let admin;
@@ -127,6 +130,8 @@ export async function refreshRecommendations(input: { libraryId: string; scope: 
   if (!parsed.success) return fail(firstIssue(parsed.error));
   const who = await member(parsed.data.libraryId);
   if (!who.ok) return fail(who.error);
+  // Both scopes call Claude; a shared set needs the requesting member to have full access too.
+  if (!(await hasFullAccess(await createClient(), who.user.id))) return fullAccessDenied();
   if (!recommendConfigured()) return fail("Recommendations are not set up on this server yet.");
 
   try {
@@ -143,7 +148,7 @@ export async function refreshRecommendations(input: { libraryId: string; scope: 
     return { ok: true, count: out.count };
   } catch (e) {
     revalidatePath("/discover");
-    if (e instanceof CapReached || e instanceof NotEnoughSignal || e instanceof RecommendError) return fail(e.message);
+    if (e instanceof CapReached || e instanceof NotEnoughSignal || e instanceof RecommendError || e instanceof AccessDenied) return fail(e.message);
     console.error("[discover] refresh failed:", e instanceof Error ? e.message : e);
     return fail("Something went wrong choosing books. Try again.");
   }

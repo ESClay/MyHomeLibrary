@@ -14,7 +14,8 @@ import {
   type UserBookRow,
 } from "@/lib/ai/recommend-prompt";
 import type { RecommendScope } from "@/lib/ai/recommend-schema";
-import { search } from "@/lib/metadata";
+import { FULL_ACCESS_NEEDED, hasFullAccess, libraryHasGrantedMember } from "@/lib/access";
+import { ALL_PROVIDERS, search } from "@/lib/metadata";
 import { capMessage, capWindowStart, nextRefreshAt, refreshCap } from "./caps";
 import { buildLibraryIndex, inLibrary, type LibraryBookLite } from "./match";
 import { buildPickSet } from "./pick-set";
@@ -36,6 +37,14 @@ export class CapReached extends Error {
   ) {
     super(message);
     this.name = "CapReached";
+  }
+}
+
+/** The person (or, for the cron job, the library) is not entitled to Claude recommendations. */
+export class AccessDenied extends Error {
+  constructor() {
+    super(FULL_ACCESS_NEEDED);
+    this.name = "AccessDenied";
   }
 }
 
@@ -238,6 +247,15 @@ async function pruneSets(client: SupabaseClient, scope: RecommendScope, p: { lib
  */
 export async function generateSet(p: GenerateParams, now = Date.now()): Promise<GenerateOutcome> {
   const { client, scope, libraryId } = p;
+  // The one place Claude is reached for recommendations, so the entitlement is checked here as well as by the callers:
+  // a manual refresh needs the requesting person to have full access (a shared set too); the cron job needs the person
+  // (personal) or at least one member of the library (shared) to have it.
+  const allowed =
+    p.trigger === "manual" || scope === "personal"
+      ? p.userId !== null && (await hasFullAccess(client, p.userId))
+      : await libraryHasGrantedMember(libraryId, client);
+  if (!allowed) throw new AccessDenied();
+
   if (p.trigger === "manual" && p.userId) {
     const cap = await refreshUsage(client, scope, { libraryId, userId: p.userId }, now);
     if (cap.reached) {
@@ -294,7 +312,7 @@ export async function generateSet(p: GenerateParams, now = Date.now()): Promise<
     const set = await buildPickSet({
       scope,
       target,
-      deps: { prompt: makePrompt, request: (prompt, s) => requestPicks(prompt, s), search, inLibrary: (c) => inLibrary(libraryIndex, c), blocked },
+      deps: { prompt: makePrompt, request: (prompt, s) => requestPicks(prompt, s), search: (q) => search(q, ALL_PROVIDERS), inLibrary: (c) => inLibrary(libraryIndex, c), blocked },
     });
     const prompt = makePrompt();
     const { error } = await client.from("recommendation_sets").insert({

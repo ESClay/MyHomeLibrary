@@ -11,10 +11,18 @@ export const REFRESH_AFTER_MS = 6.5 * 24 * 60 * 60 * 1000;
 
 /**
  * Personal sets for each active person in each of their libraries, and a shared set for every library that has at
- * least two members and at least one active member. Only targets whose latest set is older than a week (or missing),
+ * least two members and at least one active member. Claude is for people with full access, so a personal set is only for an
+ * active person who has it, and a shared set only for a library with at least one member who has it (ungranted members
+ * still see it). Only targets whose latest set is older than a week (or missing),
  * never-generated first and then the stalest.
  */
-export function pickDueTargets(input: { activeUserIds: Set<string>; memberships: Membership[]; lastSets: LastSet[]; now: number }): RecTarget[] {
+export function pickDueTargets(input: {
+  activeUserIds: Set<string>;
+  grantedUserIds: Set<string>;
+  memberships: Membership[];
+  lastSets: LastSet[];
+  now: number;
+}): RecTarget[] {
   const membersOf = new Map<string, string[]>();
   for (const m of input.memberships) membersOf.set(m.libraryId, [...(membersOf.get(m.libraryId) ?? []), m.userId]);
 
@@ -33,12 +41,14 @@ export function pickDueTargets(input: { activeUserIds: Set<string>; memberships:
   for (const m of input.memberships) {
     if (!input.activeUserIds.has(m.userId)) continue;
     libraries.add(m.libraryId);
+    if (!input.grantedUserIds.has(m.userId)) continue;
     const age = dueAge(`personal|${m.libraryId}|${m.userId}`);
     if (age >= REFRESH_AFTER_MS) out.push({ scope: "personal", libraryId: m.libraryId, userId: m.userId, memberIds: [m.userId], age });
   }
   for (const libraryId of libraries) {
     const members = membersOf.get(libraryId) ?? [];
     if (members.length < 2) continue;
+    if (!members.some((id) => input.grantedUserIds.has(id))) continue;
     const age = dueAge(`shared|${libraryId}|`);
     if (age >= REFRESH_AFTER_MS) out.push({ scope: "shared", libraryId, userId: null, memberIds: members, age });
   }

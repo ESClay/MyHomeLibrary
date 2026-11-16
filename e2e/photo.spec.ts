@@ -7,7 +7,8 @@ import { expect, test } from "@playwright/test";
  * Needs a signed-up user who owns or edits a library (E2E_EMAIL, E2E_PASSWORD) and a database with the
  * phase 3b migration applied, otherwise the spec skips. The model call is replaced by a canned answer, so the
  * run costs nothing and is stable; the upload to the private `scans` bucket and the scan_jobs row are real.
- * The spec never presses "Save", so it adds nothing to the library, and it clears the photo when it ends.
+ * The account must have full access (the admin page, or the access-control spec's grant step), because the photo tile and
+ * /api/scan are locked without it. The spec never presses "Save", so it adds nothing to the library, and it clears the photo when it ends.
  */
 const email = process.env.E2E_EMAIL;
 const password = process.env.E2E_PASSWORD;

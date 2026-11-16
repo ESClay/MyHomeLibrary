@@ -6,6 +6,7 @@ import { Avatar } from "@/components/avatar";
 import { Cover } from "@/components/cover";
 import { Badge } from "@/components/ui/badge";
 import { Stars } from "@/components/stars";
+import { hasFullAccess } from "@/lib/access";
 import { canEdit } from "@/lib/books/access";
 import { OWNERSHIP_LABEL, RATING_SOURCE_LABEL, STATUS_LABEL } from "@/lib/books/constants";
 import { loadBookDetail } from "@/lib/books/data";
@@ -15,6 +16,7 @@ import { activeLoans } from "@/lib/loans/rules";
 import { loadBorrowers } from "@/lib/loans/data";
 import { formatDate } from "@/lib/regions";
 import { getLibraryContext } from "@/lib/library";
+import { createClient } from "@/lib/supabase/server";
 import { loadShelvesForBook } from "@/lib/shelves/data";
 import { canChangeShelfBooks } from "@/lib/shelves/permissions";
 import { BookActions, DeleteBook } from "./book-actions";
@@ -42,6 +44,7 @@ export default async function BookPage({ params }: Props) {
   if (!detail) notFound();
 
   const { book, copies, me, others, role, loans, priceHistory, priceRegion } = detail;
+  const fullAccess = await hasFullAccess(await createClient(), user.id);
   const borrowers = canEdit(role) ? await loadBorrowers(book.library_id) : [];
   const now = new Date();
   const active = activeLoans(loans, now);
@@ -175,6 +178,7 @@ export default async function BookPage({ params }: Props) {
             borrowers={borrowers.map((b) => ({ id: b.id, name: b.name }))}
             currency={currency}
             priceRegion={priceRegion}
+            fullAccess={fullAccess}
             nowIso={now.toISOString()}
           />
         </Section>

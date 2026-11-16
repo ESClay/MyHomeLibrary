@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { providerPolicyFor } from "@/lib/access";
 import { search } from "@/lib/metadata";
 import { LIBRARY_LIMIT, MAX_QUERY_LENGTH, MIN_CHARS, ONLINE_LIMIT, likePatterns, normalizeQuery, type LibrarySuggestion } from "@/lib/typeahead";
 
@@ -17,7 +18,8 @@ const params = z.discriminatedUnion("source", [
  * GET /api/suggest?source=library&library=<uuid>&q=<text> -> { results: LibrarySuggestion[] }
  * GET /api/suggest?source=online&q=<text>                 -> { results: BookMetadata[] }
  * Signed-in users only. Library matches run as the user (RLS), so only libraries they belong to return rows.
- * Online matches go through lib/metadata, whose fetch layer caches repeated queries for 5 minutes.
+ * Online matches go through lib/metadata, which caches repeated queries for 5 minutes per provider set, and which only
+ * queries Open Library for people without full access.
  */
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -50,7 +52,7 @@ export async function GET(request: NextRequest) {
       }));
       return NextResponse.json({ results });
     }
-    const found = await search(q);
+    const found = await search(q, await providerPolicyFor(supabase, auth.user.id));
     return NextResponse.json({ results: found.slice(0, ONLINE_LIMIT + LIBRARY_LIMIT) });
   } catch {
     return NextResponse.json({ error: "Suggestions are unavailable right now." }, { status: 502 });

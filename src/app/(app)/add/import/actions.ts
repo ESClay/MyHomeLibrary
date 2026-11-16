@@ -27,6 +27,7 @@ import {
 import { processRow } from "@/lib/calibre/process";
 import { attachBooksToShelves } from "@/lib/shelves/assign";
 import { requireUser } from "@/lib/library";
+import { providerPolicyFor } from "@/lib/access";
 import { lookupByIsbn, rateLimitedSince, search } from "@/lib/metadata";
 import { createClient } from "@/lib/supabase/server";
 
@@ -210,6 +211,8 @@ export async function processImportBatch(input: z.input<typeof batchSchema>): Pr
   const supabase = await createClient();
   if (job.status === "pending") await supabase.from("import_jobs").update({ status: "running" }).eq("id", jobId);
 
+  // Enrichment looks books up online: Hardcover and Google for people with full access, Open Library only otherwise.
+  const policy = await providerPolicyFor(supabase, user.id);
   const startedAt = Date.now();
   const pacer = createPacer({ gapMs: LOOKUP_GAP_MS, budgetMs: BATCH_BUDGET_MS, state: pacerState });
   const ctx = {
@@ -217,7 +220,7 @@ export async function processImportBatch(input: z.input<typeof batchSchema>): Pr
     userId: user.id,
     libraryId: job.library_id,
     enrich,
-    lookups: { lookupByIsbn, search },
+    lookups: { lookupByIsbn: (isbn: string) => lookupByIsbn(isbn, policy), search: (q: string) => search(q, policy) },
     take: () => pacer.take(),
     limited: () => rateLimitedSince(startedAt),
     state: { rateLimited: false },

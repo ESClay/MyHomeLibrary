@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { authorizeBook, canEdit, fail, firstIssue, roleInLibrary, type ActionResult } from "@/lib/books/access";
+import { fullAccessDenied, hasFullAccess } from "@/lib/access";
 import { requireUser } from "@/lib/library";
 import { capMessage } from "@/lib/scan/photo";
 import { dailyScanStatus, SCANS_BUCKET } from "@/lib/scan/jobs";
@@ -28,6 +29,8 @@ export async function startScan(
   const { libraryId, photoPath } = parsed.data;
 
   const user = await requireUser();
+  // Photo recognition calls Claude, so it is for people with full access only.
+  if (!(await hasFullAccess(await createClient(), user.id))) return fullAccessDenied();
   const role = await roleInLibrary(libraryId, user.id);
   if (!canEdit(role)) return fail(role ? "Only owners and editors can change the library." : "You are not a member of that library.");
 

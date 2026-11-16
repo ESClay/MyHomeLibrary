@@ -3,7 +3,8 @@ import { z } from "zod";
 import { identifyBooks, IdentifyError } from "@/lib/ai/identify";
 import { findDuplicates } from "@/lib/duplicates";
 import { loadDuplicateCandidates } from "@/lib/books/data";
-import { lookupByIsbn, search } from "@/lib/metadata";
+import { fullAccessResponse, hasFullAccess } from "@/lib/access";
+import { ALL_PROVIDERS, lookupByIsbn, search } from "@/lib/metadata";
 import { createLimiter } from "@/lib/scan/limiter";
 import { SCANS_BUCKET } from "@/lib/scan/jobs";
 import { MAX_DOWNLOAD_BYTES, MAX_MODEL_IMAGE_BYTES, sniffImageType } from "@/lib/scan/photo";
@@ -30,6 +31,8 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
   const supabase = await createClient();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return failure(401, "auth", "Sign in first.");
+  // Claude reads the photo and Hardcover/Google resolve the titles: full access only, checked before anything is claimed or sent.
+  if (!(await hasFullAccess(supabase, auth.user.id))) return fullAccessResponse({ kind: "full_access_required" });
 
   const { data: job } = await supabase
     .from("scan_jobs")
@@ -70,7 +73,10 @@ export async function POST(_request: NextRequest, ctx: { params: Promise<{ id: s
 
     const result = await identifyBooks({ base64: Buffer.from(bytes).toString("base64"), mediaType });
 
-    const resolutions = await resolveAll(result.books, { lookupByIsbn, search });
+    const resolutions = await resolveAll(result.books, {
+      lookupByIsbn: (isbn) => lookupByIsbn(isbn, ALL_PROVIDERS),
+      search: (q) => search(q, ALL_PROVIDERS),
+    });
     const dupRun = createLimiter(4);
     const duplicates: TrayDuplicate[][] = await Promise.all(
       resolutions.map((r) =>

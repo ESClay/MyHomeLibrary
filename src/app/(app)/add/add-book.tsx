@@ -23,7 +23,7 @@ async function fetchMetadata(params: string, signal?: AbortSignal): Promise<Book
   return body.results;
 }
 
-export function AddBook({ libraryId, manualIsbn = null, borrowers, currency }: { libraryId: string; manualIsbn?: string | null; borrowers: BorrowerOption[]; currency: string | null }) {
+export function AddBook({ libraryId, fullAccess, manualIsbn = null, borrowers, currency }: { libraryId: string; fullAccess: boolean; manualIsbn?: string | null; borrowers: BorrowerOption[]; currency: string | null }) {
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [results, setResults] = useState<BookMetadata[]>([]);
@@ -143,6 +143,12 @@ export function AddBook({ libraryId, manualIsbn = null, borrowers, currency }: {
           {phase === "loading" ? "Searching…" : "Search for books"}
         </Button>
       </form>
+
+      {!fullAccess && (
+        <p data-testid="open-only-note" className="-mt-3 text-sm text-muted-foreground">
+          Searching Open Library only. Richer lookups need full access.
+        </p>
+      )}
 
       <p className="sr-only" role="status" aria-live="polite">
         {typeahead.active && open ? announce(libraryCount, suggestions.length - libraryCount, typeahead.loading) : ""}

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { fullAccessDenied, hasFullAccess } from "@/lib/access";
 import { authorizeBook, fail, type ActionResult } from "@/lib/books/access";
 import type { Condition } from "@/lib/books/constants";
 import { EbayError, ebayConfigured, getEbayClient } from "@/lib/pricing/ebay";
@@ -17,6 +18,8 @@ export async function checkCopyPrice(copyId: string): Promise<ActionResult<{ mes
   if (!parsed.success) return fail("That copy id is not valid.");
   const user = await requireUser();
   const supabase = await createClient();
+  // eBay checks are quota-limited: full access only.
+  if (!(await hasFullAccess(supabase, user.id))) return fullAccessDenied();
 
   const { data: copy } = await supabase.from("copies").select("id, book_id, format, condition, edition_isbn").eq("id", parsed.data).maybeSingle();
   if (!copy) return fail("That copy does not exist.");

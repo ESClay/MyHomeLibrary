@@ -8,10 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/shelf";
+import { isAppAdmin } from "@/lib/access";
 import { getLibraryContext } from "@/lib/library";
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
-import { BarChart3, ChevronRight, Users } from "lucide-react";
+import { BarChart3, ChevronRight, ShieldCheck, Users } from "lucide-react";
 import { PriceRegionForm, RegionForm } from "./region-forms";
 import { signOut } from "../../(auth)/actions";
 import { removeMember, renameLibrary, revokeInvite } from "./actions";
@@ -24,6 +25,7 @@ export default async function SettingsPage() {
 
   const isOwner = current.role === "owner";
   const supabase = await createClient();
+  const admin = await isAppAdmin(supabase, user.id);
 
   const [{ data: members }, { data: invites }] = await Promise.all([
     supabase
@@ -87,6 +89,7 @@ export default async function SettingsPage() {
         {[
           { href: "/stats", title: "Stats", body: "What you read, what the shelves are worth, and how the library grows.", Icon: BarChart3 },
           { href: "/borrowers", title: "Borrowers", body: "Who has your books, and who you borrowed from.", Icon: Users },
+          ...(admin ? [{ href: "/admin", title: "Admin", body: "Choose who has full access: photos, picks, prices and richer lookups.", Icon: ShieldCheck }] : []),
         ].map(({ href, title, body, Icon }) => (
           <Link
             key={href}

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { appleSignInEnabled } from "@/lib/auth-config";
 import { createClient } from "@/lib/supabase/client";
 
 type Provider = "google" | "apple";
@@ -29,9 +30,11 @@ export function OAuthButtons({ next }: { next: string }) {
       <Button type="button" variant="outline" size="lg" onClick={() => signInWith("google")}>
         Continue with Google
       </Button>
-      <Button type="button" variant="outline" size="lg" onClick={() => signInWith("apple")}>
-        Continue with Apple
-      </Button>
+      {appleSignInEnabled() && (
+        <Button type="button" variant="outline" size="lg" onClick={() => signInWith("apple")}>
+          Continue with Apple
+        </Button>
+      )}
       {error && (
         <p role="alert" className="rounded-lg border border-destructive/40 px-3 py-2 text-sm text-destructive">
           {error}

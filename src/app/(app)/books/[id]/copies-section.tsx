@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { HandHelping, Pencil, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
+import { HandHelping, Lock, Pencil, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import { addCopy, deleteCopy, updateCopy } from "@/app/(app)/books/actions";
 import { checkCopyPrice } from "@/app/(app)/books/price-actions";
 import { markReturned } from "@/app/(app)/loans/actions";
@@ -10,6 +10,7 @@ import type { BorrowerOption } from "@/components/borrower-picker";
 import { Sparkline } from "@/components/charts/sparkline";
 import { useLocale } from "@/components/locale-provider";
 import { LoanLine, LoanTag } from "@/components/loan-badge";
+import { Locked } from "@/components/locked";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,11 +42,13 @@ type Props = {
   /** The library's currency; null while the library has no price region. */
   currency: string | null;
   priceRegion: string | null;
+  /** Whether this person may run on-demand eBay checks. Without it, existing prices still show and the check is locked. */
+  fullAccess: boolean;
   /** Server clock at render, so Overdue is decided once. */
   nowIso: string;
 };
 
-export function CopiesSection({ bookId, copies, canEdit, loans, history, borrowers, currency, priceRegion, nowIso }: Props) {
+export function CopiesSection({ bookId, copies, canEdit, loans, history, borrowers, currency, priceRegion, fullAccess, nowIso }: Props) {
   const locale = useLocale();
   const [sheet, setSheet] = useState<{ copy: CopyRow | null } | null>(null);
   const [lending, setLending] = useState<CopyRow | null>(null);
@@ -146,6 +149,7 @@ export function CopiesSection({ bookId, copies, canEdit, loans, history, borrowe
                     priceRegion={priceRegion}
                     points={points}
                     canEdit={canEdit}
+                    fullAccess={fullAccess}
                     busy={busy === c.id}
                     disabled={pending}
                     note={notes[c.id]}
@@ -223,6 +227,7 @@ function PriceBlock({
   priceRegion,
   points,
   canEdit,
+  fullAccess,
   busy,
   disabled,
   note,
@@ -233,6 +238,7 @@ function PriceBlock({
   priceRegion: string | null;
   points: PricePoint[];
   canEdit: boolean;
+  fullAccess: boolean;
   busy: boolean;
   disabled: boolean;
   note?: string;
@@ -282,7 +288,15 @@ function PriceBlock({
             )}
           </div>
 
-          {canEdit && (
+          {canEdit && !fullAccess && (
+            <div className="flex flex-col gap-2">
+              <Button type="button" variant="secondary" size="sm" disabled aria-disabled className="self-start">
+                <Lock aria-hidden /> Check price
+              </Button>
+              <Locked variant="inline" />
+            </div>
+          )}
+          {canEdit && fullAccess && (
             <div className="flex flex-wrap items-center gap-3">
               <Button type="button" variant="secondary" size="sm" disabled={disabled} onClick={onCheck}>
                 <RefreshCw aria-hidden className={busy ? "animate-spin" : undefined} /> {busy ? "Checking…" : "Check price"}

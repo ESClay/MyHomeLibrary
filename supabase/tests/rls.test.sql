@@ -7,7 +7,7 @@
 -- dave (owns Lib B; accepts an invite into Lib A mid-file),
 -- eve (member of nothing, ever).
 begin;
-select plan(169);
+select plan(209);
 
 -- ---------------------------------------------------------------- fixtures
 insert into auth.users (id, aud, role, email) values
@@ -63,6 +63,13 @@ begin
   return n;
 end;
 $$;
+
+-- Phase 6b: the paid features need an entitlement, so the fixture people who use them below (alice, bob) are granted
+-- up front, as the app admin would. The service role / a direct insert is the only way to write the table.
+select pg_temp.act_as_admin();
+insert into public.user_entitlements (user_id, full_access, granted_at) values
+  ('a0000000-0000-0000-0000-000000000001', true, now()),
+  ('b0000000-0000-0000-0000-000000000002', true, now());
 
 -- --------------------------------------------------------- triggers / setup
 select is(
@@ -760,6 +767,165 @@ update public.copies set price_checked_at = now() - interval '9 days' where id =
 select is((select count(*)::int from public.price_refresh_candidates(now() - interval '7 days', 100000)
            where copy_id = '71000000-0000-0000-0000-000000000001'),
   1, 'a copy checked more than 7 days ago is a candidate again');
+
+-- ======================================================================= Phase 6b: access control
+-- Fixtures: ivy (the app admin), jack (an ordinary person who owns Lib J and has no entitlement yet), gwen (a Google sign-up).
+-- Real admins may exist on a hosted project; inside this rolled-back transaction only ivy stays, so "last admin" is testable.
+select pg_temp.act_as_admin();
+insert into auth.users (id, aud, role, email, raw_user_meta_data) values
+  ('a7000000-0000-0000-0000-000000000009', 'authenticated', 'authenticated', 'ivy@example.com', '{}'),
+  ('a7000000-0000-0000-0000-00000000000a', 'authenticated', 'authenticated', 'jack@example.com', '{}'),
+  ('a7000000-0000-0000-0000-00000000000b', 'authenticated', 'authenticated', 'gwen@example.com',
+   '{"full_name": "Gwen Google", "picture": "https://example.com/gwen.png", "iss": "https://accounts.google.com"}');
+delete from public.app_admins where user_id <> 'a7000000-0000-0000-0000-000000000009';
+insert into public.app_admins (user_id) values ('a7000000-0000-0000-0000-000000000009') on conflict do nothing;
+insert into public.libraries (id, name, owner_id) values
+  ('10000000-0000-0000-0000-0000000000e1', 'Lib J', 'a7000000-0000-0000-0000-00000000000a');
+
+-- A first-time Google sign-up: the profile is built from the Google claims, with no region yet (the app then asks for one).
+select is((select display_name || '|' || avatar_url from public.profiles where id = 'a7000000-0000-0000-0000-00000000000b'),
+  'Gwen Google|https://example.com/gwen.png', 'a Google sign-up gets a profile with its name and picture');
+select is((select region from public.profiles where id = 'a7000000-0000-0000-0000-00000000000b'),
+  null, 'a Google sign-up has no region yet, so the app asks for one');
+
+-- Reads: a person sees only their own entitlement and admin row; an admin sees all.
+select pg_temp.act_as('a7000000-0000-0000-0000-00000000000a');
+select is((select count(*)::int from public.user_entitlements
+  where user_id in ('a0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000002')),
+  0, 'a person cannot read other people''s entitlements');
+select is((select count(*)::int from public.app_admins where user_id = 'a7000000-0000-0000-0000-000000000009'),
+  0, 'a person cannot see who the admins are');
+select is(public.has_full_access('a7000000-0000-0000-0000-00000000000a'), false, 'a new person has no full access');
+-- Writes: nothing signed in can write the tables directly, and the RPCs refuse non-admins.
+select throws_ok(
+  $$insert into public.user_entitlements (user_id, full_access) values ('a7000000-0000-0000-0000-00000000000a', true)$$,
+  '42501', null, 'a person cannot grant themselves access with a direct insert');
+select throws_ok(
+  $$update public.user_entitlements set full_access = true where user_id = 'a0000000-0000-0000-0000-000000000001'$$,
+  '42501', null, 'a person cannot edit an entitlement directly');
+select throws_ok(
+  $$insert into public.app_admins (user_id) values ('a7000000-0000-0000-0000-00000000000a')$$,
+  '42501', null, 'a person cannot make themselves an admin directly');
+select throws_ok(
+  $$select public.set_full_access('a7000000-0000-0000-0000-00000000000a', true)$$,
+  '42501', null, 'set_full_access refuses a non-admin');
+select throws_ok(
+  $$select public.set_app_admin('a7000000-0000-0000-0000-00000000000a', true)$$,
+  '42501', null, 'set_app_admin refuses a non-admin');
+select throws_ok(
+  $$select * from public.admin_list_accounts()$$,
+  '42501', null, 'admin_list_accounts refuses a non-admin');
+-- Defense in depth: without the entitlement the three paid tables refuse an insert, even with the right library role.
+select throws_ok(
+  $$insert into public.scan_jobs (library_id, photo_path) values
+    ('10000000-0000-0000-0000-0000000000e1', '10000000-0000-0000-0000-0000000000e1/a7000000-0000-0000-0000-00000000000a/one.jpg')$$,
+  '42501', null, 'a scan job needs full access');
+select throws_ok(
+  $$insert into public.recommendation_sets (user_id, library_id, scope) values
+    ('a7000000-0000-0000-0000-00000000000a', '10000000-0000-0000-0000-0000000000e1', 'personal')$$,
+  '42501', null, 'a personal recommendation set needs full access');
+select throws_ok(
+  $$insert into public.recommendation_sets (user_id, library_id, scope, requested_by) values
+    (null, '10000000-0000-0000-0000-0000000000e1', 'shared', 'a7000000-0000-0000-0000-00000000000a')$$,
+  '42501', null, 'a shared recommendation set needs the requester''s full access');
+select throws_ok(
+  $$insert into public.price_check_log (user_id) values ('a7000000-0000-0000-0000-00000000000a')$$,
+  '42501', null, 'a price check needs full access');
+reset role;
+
+-- Your own entitlement is readable.
+select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
+select is((select count(*)::int from public.user_entitlements
+  where user_id in ('a0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000002')),
+  1, 'a person reads only their own entitlement row');
+reset role;
+
+-- The admin grants.
+select pg_temp.act_as('a7000000-0000-0000-0000-000000000009');
+select is((select count(*)::int from public.user_entitlements
+  where user_id in ('a0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000002')),
+  2, 'an admin reads every entitlement');
+select is((select count(*)::int from public.app_admins where user_id = 'a7000000-0000-0000-0000-000000000009'),
+  1, 'an admin can see the admin list');
+select lives_ok(
+  $$select public.set_full_access('a7000000-0000-0000-0000-00000000000a', true)$$,
+  'an admin can grant full access');
+select is((select granted_by from public.user_entitlements where user_id = 'a7000000-0000-0000-0000-00000000000a'),
+  'a7000000-0000-0000-0000-000000000009'::uuid, 'the grant records who made it');
+select is(public.has_full_access('a7000000-0000-0000-0000-00000000000a'), true, 'the granted person has full access');
+reset role;
+
+select pg_temp.act_as('a7000000-0000-0000-0000-00000000000a');
+select lives_ok(
+  $$insert into public.scan_jobs (library_id, photo_path) values
+    ('10000000-0000-0000-0000-0000000000e1', '10000000-0000-0000-0000-0000000000e1/a7000000-0000-0000-0000-00000000000a/two.jpg')$$,
+  'with full access a scan job can be created');
+select lives_ok(
+  $$insert into public.recommendation_sets (user_id, library_id, scope) values
+    ('a7000000-0000-0000-0000-00000000000a', '10000000-0000-0000-0000-0000000000e1', 'personal')$$,
+  'with full access a personal recommendation set can be stored');
+select lives_ok(
+  $$insert into public.recommendation_sets (user_id, library_id, scope, requested_by) values
+    (null, '10000000-0000-0000-0000-0000000000e1', 'shared', 'a7000000-0000-0000-0000-00000000000a')$$,
+  'with full access a shared recommendation set can be stored');
+select lives_ok(
+  $$insert into public.price_check_log (user_id) values ('a7000000-0000-0000-0000-00000000000a')$$,
+  'with full access a price check can be logged');
+select is((select full_access from public.user_entitlements where user_id = 'a7000000-0000-0000-0000-00000000000a'),
+  true, 'the granted person reads their own entitlement');
+reset role;
+
+-- The admin lists accounts and revokes.
+select pg_temp.act_as('a7000000-0000-0000-0000-000000000009');
+select is((select email || '|' || full_access::text || '|' || is_admin::text || '|' || library_count::text
+  from public.admin_list_accounts() where user_id = 'a7000000-0000-0000-0000-00000000000a'),
+  'jack@example.com|true|false|1', 'admin_list_accounts returns email, access, admin flag and library count');
+select is((select is_admin from public.admin_list_accounts() where user_id = 'a7000000-0000-0000-0000-000000000009'),
+  true, 'admin_list_accounts flags admins');
+select lives_ok(
+  $$select public.set_full_access('a7000000-0000-0000-0000-00000000000a', false)$$,
+  'an admin can revoke full access');
+select is(public.has_full_access('a7000000-0000-0000-0000-00000000000a'), false, 'a revoked person has no full access');
+reset role;
+
+select pg_temp.act_as('a7000000-0000-0000-0000-00000000000a');
+select throws_ok(
+  $$insert into public.scan_jobs (library_id, photo_path) values
+    ('10000000-0000-0000-0000-0000000000e1', '10000000-0000-0000-0000-0000000000e1/a7000000-0000-0000-0000-00000000000a/three.jpg')$$,
+  '42501', null, 'after a revoke a new scan job is refused again');
+select is(pg_temp.affected($$update public.scan_jobs set error = 'x' where photo_path like '%/two.jpg'$$),
+  1, 'a revoked person can still update a job they already started');
+reset role;
+
+-- Admins: the last one cannot be removed.
+select pg_temp.act_as('a7000000-0000-0000-0000-000000000009');
+select lives_ok(
+  $$select public.set_app_admin('a7000000-0000-0000-0000-00000000000a', true)$$,
+  'an admin can add another admin');
+select lives_ok(
+  $$select public.set_app_admin('a7000000-0000-0000-0000-00000000000a', false)$$,
+  'an admin can remove another admin');
+select throws_ok(
+  $$select public.set_app_admin('a7000000-0000-0000-0000-000000000009', false)$$,
+  '55000', null, 'the last admin cannot be removed');
+select is(public.is_app_admin('a7000000-0000-0000-0000-000000000009'), true, 'the last admin is still an admin');
+reset role;
+
+-- Function privileges: nobody anonymous, and the service role can call the helper.
+select is(has_function_privilege('anon', 'public.set_full_access(uuid, boolean)', 'execute'), false, 'anon cannot execute set_full_access');
+select is(has_function_privilege('service_role', 'public.has_full_access(uuid)', 'execute'), true, 'the service role can execute has_full_access');
+
+-- The daily price refresh skips a library with no member who has full access.
+select pg_temp.act_as_admin();
+update public.user_entitlements set full_access = false
+  where user_id in ('a0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000002');
+select is((select count(*)::int from public.price_refresh_candidates(now() - interval '7 days', 100000)
+           where copy_id = '71000000-0000-0000-0000-000000000001'),
+  0, 'a library with no granted member is not price-refreshed');
+update public.user_entitlements set full_access = true where user_id = 'b0000000-0000-0000-0000-000000000002';
+select is((select count(*)::int from public.price_refresh_candidates(now() - interval '7 days', 100000)
+           where copy_id = '71000000-0000-0000-0000-000000000001'),
+  1, 'one granted member is enough for the library to be price-refreshed');
 
 select finish();
 rollback;

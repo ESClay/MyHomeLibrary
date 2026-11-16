@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookCheck, BookmarkPlus, Check, EyeOff, RefreshCw } from "lucide-react";
 import { Cover } from "@/components/cover";
+import { Locked } from "@/components/locked";
 import { Button } from "@/components/ui/button";
 import { markNotInterested, logAlreadyRead, refreshRecommendations, wishlistPick } from "./actions";
 import { ReadSheet } from "./read-sheet";
@@ -176,6 +177,7 @@ export function RecSection({
   cap,
   canEdit,
   lastError,
+  readOnly = false,
 }: {
   libraryId: string;
   scope: "personal" | "shared";
@@ -186,6 +188,8 @@ export function RecSection({
   cap: CapView;
   canEdit: boolean;
   lastError?: string | null;
+  /** No full access: an existing set is shown, but nothing can be refreshed. */
+  readOnly?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -193,7 +197,7 @@ export function RecSection({
   const [gone, setGone] = useState<Set<string>>(new Set());
   const shared = scope === "shared";
   const visible = picks.filter((p) => !gone.has(p.key));
-  const canRefresh = state.kind === "ready" && !cap.reached;
+  const canRefresh = !readOnly && state.kind === "ready" && !cap.reached;
 
   function refresh() {
     setError(null);
@@ -220,7 +224,7 @@ export function RecSection({
             "Nothing chosen yet."
           ) : null}
         </p>
-        {state.kind !== "unavailable" && state.kind !== "needs-members" && (
+        {!readOnly && state.kind !== "unavailable" && state.kind !== "needs-members" && (
           <div className="flex flex-col gap-1 sm:items-end">
             <Button type="button" variant={visible.length === 0 ? "default" : "outline"} onClick={refresh} disabled={!canRefresh || pending} aria-busy={pending}>
               <RefreshCw className={pending ? "animate-spin" : ""} aria-hidden />
@@ -235,7 +239,8 @@ export function RecSection({
         )}
       </div>
 
-      {cap.reached && cap.message && <p className="text-sm text-muted-foreground">{cap.message}</p>}
+      {readOnly && <Locked variant="inline" />}
+      {!readOnly && cap.reached && cap.message && <p className="text-sm text-muted-foreground">{cap.message}</p>}
       {error && (
         <p role="alert" className="rounded-lg border border-destructive/40 px-3 py-2 text-sm text-destructive">
           {error}
@@ -247,12 +252,12 @@ export function RecSection({
         </p>
       )}
 
-      {state.kind === "unavailable" && (
+      {!readOnly && state.kind === "unavailable" && (
         <p className="text-base text-muted-foreground">
           Recommendations are not available on this server right now. Series gaps above still work, and picks return once the Claude API is connected.
         </p>
       )}
-      {state.kind === "needs-ratings" && (
+      {!readOnly && state.kind === "needs-ratings" && (
         <div className="flex flex-col gap-3">
           <p className="text-base text-muted-foreground">
             Picks come from what you have rated. You have rated {state.rated} so far, and {state.needed} gives Claude enough to go on. Rating more books, and leaving a note on the ones you loved or dropped, makes the picks better.
@@ -262,12 +267,12 @@ export function RecSection({
           </Button>
         </div>
       )}
-      {state.kind === "needs-members" && (
+      {!readOnly && state.kind === "needs-members" && (
         <p className="text-base text-muted-foreground">
           This section suggests books you would both like, so it needs a second reader in the library. Invite someone from Settings.
         </p>
       )}
-      {state.kind === "needs-both" && (
+      {!readOnly && state.kind === "needs-both" && (
         <p className="text-base text-muted-foreground">
           Each of you needs at least {state.needed} rated books before there is enough to match your tastes. Rate a few more and come back.
         </p>

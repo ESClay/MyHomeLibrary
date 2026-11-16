@@ -26,7 +26,7 @@ Requires Node 20.19+ and npm.
    - *URL Configuration*: set Site URL to your deployed URL and add redirect URLs `http://localhost:3000/auth/callback` and `https://<your-domain>/auth/callback`.
    - *Providers > Email*: enabled by default. Turn off "Confirm email" for faster local testing if you like.
    - *Providers > Google*: create an OAuth client (Web application) in Google Cloud Console, set its authorized redirect URI to the callback URL shown in the Supabase Google provider page (`https://<ref>.supabase.co/auth/v1/callback`), then paste the client ID and secret into Supabase.
-   - *Providers > Apple*: requires an Apple Developer account. Create a Services ID and a Sign in with Apple key, then enter them in the Supabase Apple provider page (see the Supabase docs for generating the client secret). The "Continue with Apple" button works once this is configured.
+   - *Providers > Apple*: requires an Apple Developer account. Create a Services ID and a Sign in with Apple key, then enter them in the Supabase Apple provider page (see the Supabase docs for generating the client secret). The "Continue with Apple" button stays hidden until you set `NEXT_PUBLIC_APPLE_SIGNIN_ENABLED=true` (and redeploy: `NEXT_PUBLIC_` values are inlined at build time), so turn it on only after this provider works. Google needs no flag.
 
 5. **Set environment variables**
 
@@ -59,6 +59,20 @@ Requires Node 20.19+ and npm.
 1. Push the repo to GitHub and import it at <https://vercel.com/new> (framework preset: Next.js).
 2. Add the environment variables from `.env.example` under *Project Settings > Environment Variables*.
 3. Deploy, then add the production URL and `https://<domain>/auth/callback` to the Supabase redirect URLs (step 4 above).
+
+## Access control and the admin page
+
+Sign-up is open and anyone can catalogue books by hand with Open Library lookups. The features that cost money or use a limited quota need **full access**, which an admin switches on per account: photo recognition, Discover recommendations, eBay prices, and Hardcover and Google Books lookups (including series sync). Without it those parts show "Full access needed" and lookups use Open Library only.
+
+- Data: `app_admins` and `user_entitlements` (migration `20261121000000_access_control.sql`). Neither can be written by a signed-in user directly; changes go through the `set_full_access` and `set_app_admin` functions, which only admins can call. The same migration makes the database refuse scan jobs, recommendation sets and price-check logs from a user without access.
+- Code: every server action and route asks `src/lib/access.ts` first. The daily job only works for people and libraries that have a granted member.
+- Admin page: `/admin` (linked from Settings, admins only; everyone else gets a 404) lists accounts, searches by name or email and flips full access.
+- First admin: after applying the migration, run this once in the Supabase SQL editor (it runs as the service role, so it is not part of the migrations), then give yourself full access on the admin page:
+
+  ```sql
+  insert into public.app_admins (user_id)
+  select id from auth.users where email = '<your email>';
+  ```
 
 ## Photo recognition (Add > Photograph covers)
 
