@@ -1,0 +1,163 @@
+{
+  "_note": "Recorded from the live Hardcover API: search(query_type 'Series') for 'The Witcher Andrzej Sapkowski', trimmed to four hits, 2026-11-15.",
+  "data": {
+    "search": {
+      "results": {
+        "found": 14,
+        "hits": [
+          {
+            "document": {
+              "author": {
+                "id": 704878,
+                "image": {},
+                "name": "Jacek Rembiś",
+                "slug": "jacek-rembis-d18e7876-3098-4ff5-b198-7b76d950e98c"
+              },
+              "author_name": "Jacek Rembiś",
+              "books": [
+                "Andrzej Sapkowski's The Witcher: A Grain of Truth",
+                "Andrzej Sapkowski's The Witcher: The Last Wish",
+                "Andrzej Sapkowski's The Witcher: The Edge of the World"
+              ],
+              "books_count": 4,
+              "id": "88799",
+              "name": "Andrzej Sapkowski’s The Witcher",
+              "primary_books_count": 6,
+              "readers_count": 18,
+              "slug": "andrzej-sapkowski-s-the-witcher"
+            },
+            "text_match": 2314894133233713170,
+            "text_match_info": {
+              "best_field_score": "4419494150400",
+              "best_field_weight": 2,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "2314894133233713170",
+              "tokens_matched": 4,
+              "typo_prefix_score": 1
+            }
+          },
+          {
+            "document": {
+              "author": {
+                "id": 92450,
+                "image": {
+                  "color": "#b8b8b8",
+                  "color_name": "Silver",
+                  "height": 500,
+                  "id": 31606,
+                  "url": "https://assets.hardcover.app/authors/65146/6757706-L.jpg",
+                  "width": 348
+                },
+                "name": "Andrzej Sapkowski",
+                "slug": "andrzej-sapkowski"
+              },
+              "author_name": "Andrzej Sapkowski",
+              "books": [
+                "Andrzej Sapkowski's The Witcher: The Edge of the World"
+              ],
+              "books_count": 1,
+              "id": "270435",
+              "name": "The Witcher (Dark Horse Comics)",
+              "primary_books_count": 1,
+              "readers_count": 1,
+              "slug": "the-witcher-dark-horse-comics-andrzej-sapkowski"
+            },
+            "text_match": 2314894133233188875,
+            "text_match_info": {
+              "best_field_score": "4419494150144",
+              "best_field_weight": 1,
+              "fields_matched": 3,
+              "num_tokens_dropped": 0,
+              "score": "2314894133233188875",
+              "tokens_matched": 4,
+              "typo_prefix_score": 1
+            }
+          },
+          {
+            "document": {
+              "author": {
+                "id": 92450,
+                "image": {
+                  "color": "#b8b8b8",
+                  "color_name": "Silver",
+                  "height": 500,
+                  "id": 31606,
+                  "url": "https://assets.hardcover.app/authors/65146/6757706-L.jpg",
+                  "width": 348
+                },
+                "name": "Andrzej Sapkowski",
+                "slug": "andrzej-sapkowski"
+              },
+              "author_name": "Andrzej Sapkowski",
+              "books": [
+                "The Last Wish",
+                "Blood of Elves",
+                "Sword of Destiny"
+              ],
+              "books_count": 35,
+              "id": "1808",
+              "name": "The Witcher",
+              "primary_books_count": 5,
+              "readers_count": 14404,
+              "slug": "the-witcher"
+            },
+            "text_match": 2310372976048472083,
+            "text_match_info": {
+              "best_field_score": "2211897868544",
+              "best_field_weight": 2,
+              "fields_matched": 3,
+              "num_tokens_dropped": 0,
+              "score": "2310372976048472083",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "author": {
+                "id": 92450,
+                "image": {
+                  "color": "#b8b8b8",
+                  "color_name": "Silver",
+                  "height": 500,
+                  "id": 31606,
+                  "url": "https://assets.hardcover.app/authors/65146/6757706-L.jpg",
+                  "width": 348
+                },
+                "name": "Andrzej Sapkowski",
+                "slug": "andrzej-sapkowski"
+              },
+              "author_name": "Andrzej Sapkowski",
+              "books": [
+                "The Last Wish",
+                "Blood of Elves",
+                "Sword of Destiny"
+              ],
+              "books_count": 13,
+              "id": "76885",
+              "name": "The Witcher (Publication order)",
+              "primary_books_count": 9,
+              "readers_count": 14168,
+              "slug": "the-witcher-publication-order"
+            },
+            "text_match": 2310372976048472075,
+            "text_match_info": {
+              "best_field_score": "2211897868544",
+              "best_field_weight": 1,
+              "fields_matched": 3,
+              "num_tokens_dropped": 0,
+              "score": "2310372976048472075",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          }
+        ],
+        "out_of": 291556,
+        "page": 1,
+        "search_cutoff": false,
+        "search_time_ms": 2
+      }
+    }
+  }
+}

@@ -161,19 +161,32 @@ export function hardcoverHits(results: unknown): unknown[] {
   return hits.map((h) => obj(h)?.document ?? h);
 }
 
-async function gql(query: string, variables: Json): Promise<Json | null> {
+export type HardcoverQueryOptions = { timeoutMs?: number; ttlMs?: number };
+
+/** True when a Hardcover API token is set. */
+export function hardcoverConfigured(): boolean {
+  return token() !== null;
+}
+
+/**
+ * One GraphQL request. Returns null when no token is set. Errors throw (an HTTP 429 reads "HTTP 429").
+ * Every top-level field in a query costs one request against Hardcover's limits (60/min, burst 10).
+ */
+export async function hardcoverQuery(query: string, variables: Json, opts: HardcoverQueryOptions = {}): Promise<Json | null> {
   const t = token();
   if (!t) return null;
   const res = await fetchJson<{ data?: Json; errors?: unknown }>(ENDPOINT, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: authHeader(t) },
     body: JSON.stringify({ query, variables }),
-    timeoutMs: 8000,
-    ttlMs: 10 * 60 * 1000,
+    timeoutMs: opts.timeoutMs ?? 8000,
+    ttlMs: opts.ttlMs ?? 10 * 60 * 1000,
   });
   if (res.errors && !res.data) throw new Error("Hardcover returned GraphQL errors");
   return res.data ?? null;
 }
+
+const gql = hardcoverQuery;
 
 export const hardcover: MetadataProvider = {
   name: "hardcover",

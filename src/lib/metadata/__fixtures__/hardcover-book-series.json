@@ -1,0 +1,55 @@
+{
+  "_note": "Recorded from the live Hardcover API (books -> book_series -> series) on 2026-11-15 for book 312460 (Dune).",
+  "data": {
+    "books": [
+      {
+        "id": 312460,
+        "title": "Dune",
+        "book_series": [
+          {
+            "position": 1,
+            "details": "1",
+            "compilation": false,
+            "featured": true,
+            "series": {
+              "id": 1150,
+              "name": "Dune",
+              "canonical_id": null,
+              "state": "active",
+              "books_count": 19,
+              "primary_books_count": 6
+            }
+          },
+          {
+            "position": 21,
+            "details": "21",
+            "compilation": false,
+            "featured": false,
+            "series": {
+              "id": 167619,
+              "name": "Dune Universe (Chronological)",
+              "canonical_id": null,
+              "state": "active",
+              "books_count": 39,
+              "primary_books_count": 30
+            }
+          },
+          {
+            "position": 1,
+            "details": "1",
+            "compilation": false,
+            "featured": false,
+            "series": {
+              "id": 168882,
+              "name": "Dune Universe (Publication Order)",
+              "canonical_id": null,
+              "state": "active",
+              "books_count": 35,
+              "primary_books_count": 23
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

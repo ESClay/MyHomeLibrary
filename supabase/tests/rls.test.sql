@@ -7,7 +7,7 @@
 -- dave (owns Lib B; accepts an invite into Lib A mid-file),
 -- eve (member of nothing, ever).
 begin;
-select plan(99);
+select plan(121);
 
 -- ---------------------------------------------------------------- fixtures
 insert into auth.users (id, aud, role, email) values
@@ -474,6 +474,106 @@ select is((select count(*)::int from public.shelves where id::text like '5000000
 select throws_ok(
   $$insert into public.shelves (library_id, name, visibility) values ('10000000-0000-0000-0000-00000000000a', 'Eve', 'private')$$,
   '42501', null, 'a non-member cannot create a private shelf');
+reset role;
+
+-- ------------------------------------------------------------------- Discover (phase 5)
+-- Fixtures: a shared set and alice's and bob's personal sets in Lib A, alice's feedback and a cron_runs row.
+select pg_temp.act_as_admin();
+insert into public.recommendation_sets (id, user_id, library_id, scope) values
+  ('60000000-0000-0000-0000-000000000001', null, '10000000-0000-0000-0000-00000000000a', 'shared'),
+  ('60000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000a', 'personal'),
+  ('60000000-0000-0000-0000-000000000003', 'b0000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-00000000000a', 'personal');
+insert into public.recommendation_feedback (user_id, work_key, feedback, title) values
+  ('a0000000-0000-0000-0000-000000000001', 'fixture work|key', 'not_interested', 'Fixture');
+insert into public.cron_runs (task, last_status) values ('fixture-task', 'complete');
+
+select throws_ok(
+  $$insert into public.recommendation_sets (user_id, library_id, scope) values
+    ('a0000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000a', 'shared')$$,
+  '23514', null, 'a shared set cannot belong to one person');
+select throws_ok(
+  $$insert into public.recommendation_sets (user_id, library_id, scope) values
+    (null, '10000000-0000-0000-0000-00000000000a', 'personal')$$,
+  '23514', null, 'a personal set must belong to someone');
+
+select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
+select is((select count(*)::int from public.recommendation_sets where id = '60000000-0000-0000-0000-000000000001'),
+  1, 'the owner sees the library''s shared set');
+select is((select count(*)::int from public.recommendation_sets where id = '60000000-0000-0000-0000-000000000002'),
+  1, 'the owner sees their own personal set');
+select is((select count(*)::int from public.recommendation_sets where id = '60000000-0000-0000-0000-000000000003'),
+  0, 'the owner does not see another member''s personal set');
+select is((select count(*)::int from public.cron_runs where task = 'fixture-task'),
+  0, 'a signed-in user sees no cron_runs rows');
+select throws_ok(
+  $$insert into public.cron_runs (task) values ('alice-task')$$,
+  '42501', null, 'a signed-in user cannot write cron_runs');
+select throws_ok(
+  $$insert into public.series_entries (series_id, title) values (gen_random_uuid(), 'Forged entry')$$,
+  '42501', null, 'a signed-in user cannot write series_entries');
+select throws_ok(
+  $$insert into public.series (name) values ('Forged series')$$,
+  '42501', null, 'a signed-in user cannot write series');
+reset role;
+
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select is((select count(*)::int from public.recommendation_sets where id = '60000000-0000-0000-0000-000000000001'),
+  1, 'an editor sees the shared set');
+select is((select count(*)::int from public.recommendation_sets where id = '60000000-0000-0000-0000-000000000002'),
+  0, 'a member cannot see another member''s personal set');
+select is((select count(*)::int from public.recommendation_feedback where work_key = 'fixture work|key'),
+  0, 'a member cannot read another member''s feedback');
+select throws_ok(
+  $$insert into public.recommendation_feedback (user_id, work_key, feedback) values
+    ('a0000000-0000-0000-0000-000000000001', 'forged|key', 'not_interested')$$,
+  '42501', null, 'a member cannot write feedback as another member');
+select lives_ok(
+  $$insert into public.recommendation_feedback (user_id, work_key, feedback, title) values
+    ('b0000000-0000-0000-0000-000000000002', 'bob work|key', 'already_read', 'Bob''s pick')$$,
+  'a member can write their own feedback, including on a shared pick');
+select throws_ok(
+  $$insert into public.recommendation_sets (user_id, library_id, scope) values
+    ('a0000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000a', 'personal')$$,
+  '42501', null, 'a member cannot create a personal set for someone else');
+select lives_ok(
+  $$insert into public.recommendation_sets (id, user_id, library_id, scope, requested_by) values
+    ('60000000-0000-0000-0000-000000000004', null, '10000000-0000-0000-0000-00000000000a', 'shared',
+     'b0000000-0000-0000-0000-000000000002')$$,
+  'a member can store a shared set for their library');
+select throws_ok(
+  $$insert into public.recommendation_sets (user_id, library_id, scope, requested_by) values
+    (null, '10000000-0000-0000-0000-00000000000a', 'shared', 'a0000000-0000-0000-0000-000000000001')$$,
+  '42501', null, 'a shared set cannot be stored in someone else''s name');
+select is(
+  pg_temp.affected($$update public.recommendation_sets set error = 'x' where id = '60000000-0000-0000-0000-000000000001'$$),
+  0, 'nobody can edit a stored set');
+select is(
+  pg_temp.affected($$delete from public.recommendation_sets where id = '60000000-0000-0000-0000-000000000002'$$),
+  0, 'a member cannot delete another member''s personal set');
+reset role;
+
+-- Dave accepted an invite into Lib A earlier, so he is no outsider here. Frank owns Lib C and never joins Lib A.
+select pg_temp.act_as_admin();
+insert into auth.users (id, aud, role, email) values
+  ('f1000000-0000-0000-0000-000000000006', 'authenticated', 'authenticated', 'frank@example.com');
+insert into public.libraries (id, name, owner_id) values
+  ('10000000-0000-0000-0000-00000000000c', 'Lib C', 'f1000000-0000-0000-0000-000000000006');
+
+select pg_temp.act_as('f1000000-0000-0000-0000-000000000006');
+select is((select count(*)::int from public.recommendation_sets where library_id = '10000000-0000-0000-0000-00000000000a'),
+  0, 'a member of another library sees none of Lib A''s sets');
+reset role;
+
+select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
+select throws_ok(
+  $$insert into public.recommendation_sets (user_id, library_id, scope, requested_by) values
+    (null, '10000000-0000-0000-0000-00000000000a', 'shared', 'e0000000-0000-0000-0000-000000000005')$$,
+  '42501', null, 'a non-member cannot store a shared set in another library');
+reset role;
+
+select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
+select is((select count(*)::int from public.recommendation_sets where id::text like '60000000-%'),
+  0, 'a non-member sees no recommendation sets');
 reset role;
 
 select finish();

@@ -1,0 +1,261 @@
+{
+  "_note": "Recorded from the live Hardcover API (series -> book_series -> book) for series 1150, 2026-11-15. Query filters: book_series.compilation false, canonical null, not partial, distinct_on position.",
+  "data": {
+    "series": [
+      {
+        "id": 1150,
+        "name": "Dune",
+        "books_count": 19,
+        "author": {
+          "name": "Frank Herbert"
+        },
+        "book_series": [
+          {
+            "position": 1,
+            "details": "1",
+            "compilation": false,
+            "book": {
+              "id": 312460,
+              "title": "Dune",
+              "release_date": "1965-06-01",
+              "release_year": 1965,
+              "compilation": false,
+              "cached_image": {
+                "id": 8002503,
+                "url": "https://assets.hardcover.app/edition/6216483/16b2e7f2-d173-46d4-932c-8c5158ea5eff.jpg",
+                "color": "#b61504",
+                "width": 1695,
+                "height": 2560,
+                "color_name": "Brown"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Frank Herbert"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9780441172719"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780441005901"
+              }
+            }
+          },
+          {
+            "position": 2,
+            "details": "2",
+            "compilation": false,
+            "book": {
+              "id": 427393,
+              "title": "Dune Messiah",
+              "release_date": "1969-01-01",
+              "release_year": 1969,
+              "compilation": false,
+              "cached_image": {
+                "id": 3649231,
+                "url": "https://assets.hardcover.app/edition/24211570/08ad8362f4da9c08a76f6d08aeab822336b97c35.jpeg",
+                "color": "#004880",
+                "width": 333,
+                "height": 500,
+                "color_name": "Blue"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Frank Herbert"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9781690319856"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780593201732"
+              }
+            }
+          },
+          {
+            "position": 3,
+            "details": "3",
+            "compilation": false,
+            "book": {
+              "id": 427314,
+              "title": "Children of Dune",
+              "release_date": "1976-04-01",
+              "release_year": 1976,
+              "compilation": false,
+              "cached_image": {
+                "id": 5942035,
+                "url": "https://assets.hardcover.app/edition/30825973/a2fec259-e3b1-4d17-8755-2bbe0af30ca9.jpg",
+                "color": "#f7b354",
+                "width": 1064,
+                "height": 1600,
+                "color_name": "Gold"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Frank Herbert"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9780593098240"
+              },
+              "default_cover_edition": {
+                "isbn_13": null
+              }
+            }
+          },
+          {
+            "position": 4,
+            "details": "4",
+            "compilation": false,
+            "book": {
+              "id": 427363,
+              "title": "God Emperor of Dune",
+              "release_date": "1981-05-01",
+              "release_year": 1981,
+              "compilation": false,
+              "cached_image": {
+                "id": 4723301,
+                "url": "https://assets.hardcover.app/external_data/30542666/b90d2d32426e5bf180573b4e97421db3307c93e0.jpeg",
+                "color": "#034f4b",
+                "width": 333,
+                "height": 500,
+                "color_name": "Green"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Frank Herbert"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9780425062425"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780425072721"
+              }
+            }
+          },
+          {
+            "position": 5,
+            "details": "5",
+            "compilation": false,
+            "book": {
+              "id": 235277,
+              "title": "Heretics of Dune",
+              "release_date": "1984-01-01",
+              "release_year": 1984,
+              "compilation": false,
+              "cached_image": {
+                "id": 4723433,
+                "url": "https://assets.hardcover.app/external_data/34012594/456aa8e348ebe788a666073fce75256b5550286f.jpeg",
+                "color": "#216026",
+                "width": 333,
+                "height": 500,
+                "color_name": "Green"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Frank Herbert"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9781101374689"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780593201763"
+              }
+            }
+          },
+          {
+            "position": 6,
+            "details": "6",
+            "compilation": false,
+            "book": {
+              "id": 439821,
+              "title": "Chapterhouse: Dune",
+              "release_date": "1985-04-01",
+              "release_year": 1985,
+              "compilation": false,
+              "cached_image": {
+                "id": 4723330,
+                "url": "https://assets.hardcover.app/external_data/31893320/efffef4e8411170a641893fa6b705ae35f3b7455.jpeg",
+                "color": "#d47002",
+                "width": 333,
+                "height": 500,
+                "color_name": "Orange"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Frank Herbert"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9781531108496"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780593201770"
+              }
+            }
+          },
+          {
+            "position": null,
+            "details": null,
+            "compilation": false,
+            "book": {
+              "id": 439865,
+              "title": "Hunters of Dune",
+              "release_date": "2006-04-22",
+              "release_year": 2006,
+              "compilation": false,
+              "cached_image": {
+                "id": 4749344,
+                "url": "https://assets.hardcover.app/editions/21284957/775ff358-059b-472e-b2db-279d7da47fc2.jpg",
+                "color": "#d00304",
+                "width": 1400,
+                "height": 2264,
+                "color_name": "Purple"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Brian Herbert"
+                  }
+                },
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Kevin J. Anderson"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9781415932025"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9781415932025"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

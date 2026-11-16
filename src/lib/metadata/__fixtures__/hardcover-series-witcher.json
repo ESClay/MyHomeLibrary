@@ -1,0 +1,445 @@
+{
+  "_note": "Recorded from the live Hardcover API for series 1808 (The Witcher), 2026-11-15. Shows fractional positions (0.1, 0.5, 0.7), an entry with book.compilation true and details '0, 5', and an entry with a null position.",
+  "data": {
+    "series": [
+      {
+        "id": 1808,
+        "name": "The Witcher",
+        "books_count": 16,
+        "author": {
+          "name": "Andrzej Sapkowski"
+        },
+        "book_series": [
+          {
+            "position": 0,
+            "details": "0, 5",
+            "compilation": false,
+            "book": {
+              "id": 2879497,
+              "title": "La Dame du lac / La saison des orages",
+              "release_date": "2019-09-01",
+              "release_year": 2019,
+              "compilation": true,
+              "cached_image": {
+                "id": 7836611,
+                "url": "https://assets.hardcover.app/external_data/4163270/b8a9cabbd8616a9f265a5419a26be0eec31755e2.jpeg",
+                "color": "#e1ddc2",
+                "width": 1497,
+                "height": 2356,
+                "color_name": "Beige"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9782298156225"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9782298156225"
+              }
+            }
+          },
+          {
+            "position": 0.1,
+            "details": "0.1",
+            "compilation": false,
+            "book": {
+              "id": 2060091,
+              "title": "Crossroads of Ravens",
+              "release_date": "2024-10-15",
+              "release_year": 2024,
+              "compilation": false,
+              "cached_image": {
+                "id": 5929971,
+                "url": "https://assets.hardcover.app/edition/32243813/9fe35a02-97ba-4622-a20d-37a3703f1e9d.png",
+                "color": "#53564d",
+                "width": 513,
+                "height": 797,
+                "color_name": "Brown"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                },
+                {
+                  "contribution": "Translator",
+                  "author": {
+                    "name": "David French"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9780316597739"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780316597739"
+              }
+            }
+          },
+          {
+            "position": 0.2,
+            "details": "0.2",
+            "compilation": false,
+            "book": {
+              "id": 461967,
+              "title": "Season of Storms",
+              "release_date": "2013-09-01",
+              "release_year": 2013,
+              "compilation": false,
+              "cached_image": {
+                "id": 2117692,
+                "url": "https://assets.hardcover.app/external_data/60537957/609c6f67ffc6996ff5c488141bcb698dc4e74ee3.jpeg",
+                "color": "#003f48",
+                "width": 323,
+                "height": 500,
+                "color_name": "Purple"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                },
+                {
+                  "contribution": "Translator",
+                  "author": {
+                    "name": "David   French"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": null
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780316457231"
+              }
+            }
+          },
+          {
+            "position": 0.5,
+            "details": "0.5",
+            "compilation": false,
+            "book": {
+              "id": 89809,
+              "title": "The Last Wish",
+              "release_date": "1993-11-01",
+              "release_year": 1993,
+              "compilation": false,
+              "cached_image": {
+                "id": 2643509,
+                "url": "https://assets.hardcover.app/external_data/45227371/e884c4a2b40fab63bff10f9e2213c3854952f4e8.jpeg",
+                "color": "#601c1b",
+                "width": 324,
+                "height": 500,
+                "color_name": "Brown"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                },
+                {
+                  "contribution": "Translator",
+                  "author": {
+                    "name": "Danusia Stok"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9789779922652"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780316333528"
+              }
+            }
+          },
+          {
+            "position": 0.7,
+            "details": "0.7",
+            "compilation": false,
+            "book": {
+              "id": 445143,
+              "title": "Sword of Destiny",
+              "release_date": "1992-05-01",
+              "release_year": 1992,
+              "compilation": false,
+              "cached_image": {
+                "id": 5966394,
+                "url": "https://assets.hardcover.app/edition/30538244/578e953d-dc4e-4359-87a4-48dc71d8d8e9.jpg",
+                "color": "#8d8d96",
+                "width": 973,
+                "height": 1500,
+                "color_name": "Purple"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                },
+                {
+                  "contribution": "Translator",
+                  "author": {
+                    "name": "David   French"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9780316452564"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780316453264"
+              }
+            }
+          },
+          {
+            "position": 1,
+            "details": "1",
+            "compilation": false,
+            "book": {
+              "id": 445065,
+              "title": "Blood of Elves",
+              "release_date": "1994-08-01",
+              "release_year": 1994,
+              "compilation": false,
+              "cached_image": {
+                "id": 5966395,
+                "url": "https://assets.hardcover.app/edition/26907699/e2b630fa-a2fb-405c-adf8-e79dad622ffc.jpg",
+                "color": "#964b2a",
+                "width": 959,
+                "height": 1500,
+                "color_name": "Brown"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                },
+                {
+                  "contribution": "Translator",
+                  "author": {
+                    "name": "Danusia Stok"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9780316452663"
+              },
+              "default_cover_edition": {
+                "isbn_13": null
+              }
+            }
+          },
+          {
+            "position": 2,
+            "details": "2",
+            "compilation": false,
+            "book": {
+              "id": 1408508,
+              "title": "The Time of Contempt",
+              "release_date": "1995-06-01",
+              "release_year": 1995,
+              "compilation": false,
+              "cached_image": {
+                "id": 5966396,
+                "url": "https://assets.hardcover.app/book/445147/6c371a78-3712-4283-9c76-c8cad3d38fb1.jpg",
+                "color": "#5b6875",
+                "width": 963,
+                "height": 1500,
+                "color_name": "Purple"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                },
+                {
+                  "contribution": "Translator",
+                  "author": {
+                    "name": "David French"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9780316219136"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780316451550"
+              }
+            }
+          },
+          {
+            "position": 3,
+            "details": "3",
+            "compilation": false,
+            "book": {
+              "id": 270888,
+              "title": "Baptism of Fire",
+              "release_date": "1996-05-01",
+              "release_year": 1996,
+              "compilation": false,
+              "cached_image": {
+                "id": 5966398,
+                "url": "https://assets.hardcover.app/edition/31606033/1858883a-c331-4757-b4bf-ade7b192c661.jpg",
+                "color": "#30883f",
+                "width": 956,
+                "height": 1500,
+                "color_name": "Green"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                },
+                {
+                  "contribution": "Translator",
+                  "author": {
+                    "name": "David   French"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9780316219181"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780316456906"
+              }
+            }
+          },
+          {
+            "position": 4,
+            "details": "4",
+            "compilation": false,
+            "book": {
+              "id": 467479,
+              "title": "The Tower of the Swallow",
+              "release_date": "1997-09-01",
+              "release_year": 1997,
+              "compilation": false,
+              "cached_image": {
+                "id": 5966399,
+                "url": "https://assets.hardcover.app/book/467479/d15df3e8-e93a-4803-85d1-2010285cb0a4.jpg",
+                "color": "#966223",
+                "width": 956,
+                "height": 1500,
+                "color_name": "Brown"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                },
+                {
+                  "contribution": "Translator",
+                  "author": {
+                    "name": "David French"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9781473211568"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780316457033"
+              }
+            }
+          },
+          {
+            "position": 5,
+            "details": "5",
+            "compilation": false,
+            "book": {
+              "id": 445169,
+              "title": "The Lady of the Lake",
+              "release_date": "1999-09-01",
+              "release_year": 1999,
+              "compilation": false,
+              "cached_image": {
+                "id": 5966400,
+                "url": "https://assets.hardcover.app/edition/30641037/67656100-d2cb-4047-ac7d-ab05eade3458.jpg",
+                "color": "#646373",
+                "width": 937,
+                "height": 1500,
+                "color_name": "Purple"
+              },
+              "contributions": [
+                {
+                  "contribution": "Translator",
+                  "author": {
+                    "name": "David   French"
+                  }
+                },
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9789897731433"
+              },
+              "default_cover_edition": {
+                "isbn_13": "9780316457132"
+              }
+            }
+          },
+          {
+            "position": null,
+            "details": null,
+            "compilation": false,
+            "book": {
+              "id": 463400,
+              "title": "Something ends, something begins",
+              "release_date": "1988-08-01",
+              "release_year": 1988,
+              "compilation": false,
+              "cached_image": {
+                "id": 5966401,
+                "url": "https://assets.hardcover.app/edition/30593102/749dde3d-3001-49ea-b3d6-c015416e5c7c.jpg",
+                "color": "#eef0e2",
+                "width": 638,
+                "height": 826,
+                "color_name": "Beige"
+              },
+              "contributions": [
+                {
+                  "contribution": "Author",
+                  "author": {
+                    "name": "Andrzej Sapkowski"
+                  }
+                }
+              ],
+              "default_physical_edition": {
+                "isbn_13": "9788370541446"
+              },
+              "default_cover_edition": {
+                "isbn_13": null
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
