@@ -4,9 +4,39 @@ import { CreateLibraryForm } from "@/components/create-library-form";
 import { LibrarySwitcher } from "@/components/library-switcher";
 import { BottomTabs, SidebarNav } from "@/components/nav";
 import { getLibraryContext } from "@/lib/library";
+import { signOut } from "../(auth)/actions";
+import { Button } from "@/components/ui/button";
+import { LocaleProvider } from "@/components/locale-provider";
+import { RegionStepForm } from "./region/region-step";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const { libraries, current } = await getLibraryContext();
+  const { libraries, current, region, locale } = await getLibraryContext();
+
+  // One-time step for OAuth sign-ups and accounts from before regions existed. Nothing else renders until it is done,
+  // so no page ever runs without a currency and locale; sign-out stays reachable.
+  if (!region) {
+    return (
+      <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-8 px-4 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))]">
+        <div className="flex items-center gap-2.5">
+          <BrandMark />
+          <Wordmark />
+        </div>
+        <div className="rise flex flex-col gap-2">
+          <p className="eyebrow text-gilt">One quick thing</p>
+          <h1 className="page-title">Choose your region</h1>
+          <p className="text-base text-muted-foreground">
+            It sets the currency your prices show in and how dates and numbers read. Your library prices follow it too.
+          </p>
+        </div>
+        <RegionStepForm />
+        <form action={signOut} className="border-t border-border pt-4">
+          <Button type="submit" variant="ghost" className="-ml-3">
+            Sign out instead
+          </Button>
+        </form>
+      </main>
+    );
+  }
 
   if (!current) {
     return (
@@ -38,6 +68,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   return (
+    <LocaleProvider locale={locale}>
     <div className="min-h-dvh md:flex">
       <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col gap-8 border-r border-sidebar-border bg-sidebar p-5 md:flex">
         <div className="flex items-center gap-2.5 px-1 pt-1">
@@ -62,5 +93,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
       <BottomTabs />
     </div>
+    </LocaleProvider>
   );
 }

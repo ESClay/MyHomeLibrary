@@ -1,0 +1,14 @@
+{
+  "href": "https://api.ebay.com/buy/browse/v1/item_summary/search?gtin=9780441172719&filter=buyingOptions:{FIXED_PRICE},conditionIds:{4000}&limit=50",
+  "total": 5,
+  "next": null,
+  "limit": 50,
+  "offset": 0,
+  "itemSummaries": [
+    { "itemId": "v1|110000000001|0", "title": "Dune by Frank Herbert", "price": { "value": "9.50", "currency": "CAD" }, "condition": "Very Good", "conditionId": "4000", "buyingOptions": ["FIXED_PRICE"], "shippingOptions": [{ "shippingCostType": "FIXED", "shippingCost": { "value": "5.00", "currency": "CAD" } }] },
+    { "itemId": "v1|110000000002|0", "title": "Dune Frank Herbert paperback", "price": { "value": "12.00", "currency": "CAD" }, "condition": "Very Good", "conditionId": "4000", "buyingOptions": ["FIXED_PRICE"], "shippingOptions": [{ "shippingCostType": "FIXED", "shippingCost": { "value": "0.00", "currency": "CAD" } }] },
+    { "itemId": "v1|110000000003|0", "title": "Dune (Ace)", "price": { "value": "8.00", "currency": "CAD" }, "condition": "Very Good", "conditionId": "4000", "buyingOptions": ["FIXED_PRICE", "BEST_OFFER"] },
+    { "itemId": "v1|110000000004|0", "title": "Dune - listed in dollars", "price": { "value": "6.00", "currency": "USD" }, "condition": "Very Good", "conditionId": "4000", "buyingOptions": ["FIXED_PRICE"] },
+    { "itemId": "v1|110000000005|0", "title": "Dune auction only", "price": { "value": "1.00", "currency": "CAD" }, "condition": "Very Good", "conditionId": "4000", "buyingOptions": ["AUCTION"] }
+  ]
+}

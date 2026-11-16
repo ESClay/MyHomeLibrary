@@ -17,7 +17,9 @@ import {
   type BookDraft,
   type CopyDraft,
 } from "@/components/book-forms";
+import { BorrowerPicker, borrowerChoice, emptyBorrower, type BorrowerOption, type BorrowerState } from "@/components/borrower-picker";
 import { CoverPicker } from "@/components/cover-picker";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -29,6 +31,8 @@ export function ConfirmSheet({
   libraryId,
   candidate,
   initialIsbn,
+  borrowers,
+  currency = null,
   onClose,
 }: {
   libraryId: string;
@@ -36,6 +40,10 @@ export function ConfirmSheet({
   candidate: BookMetadata | null;
   /** Prefills the ISBN of a by-hand entry (from a scan the lookup could not find). */
   initialIsbn?: string;
+  /** The library's borrowers list. Passing it adds the "I borrowed this" choice. */
+  borrowers?: BorrowerOption[];
+  /** The library currency, for the price field. */
+  currency?: string | null;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -45,6 +53,8 @@ export function ConfirmSheet({
   const [draft, setDraft] = useState<BookDraft>(candidate ? draftFromMetadata(candidate) : { ...emptyBookDraft, isbn13: initialIsbn ?? "" });
   const [ownership, setOwnership] = useState<Ownership>("owned");
   const [copy, setCopy] = useState<CopyDraft>(emptyCopyDraft);
+  const [lender, setLender] = useState<BorrowerState>(emptyBorrower);
+  const [dueBack, setDueBack] = useState("");
   const [myStatus, setMyStatus] = useState<Status | "">("");
   const [cover, setCover] = useState<string | null>(candidate?.covers[0]?.url ?? null);
   const [showDetails, setShowDetails] = useState(manual);
@@ -69,7 +79,8 @@ export function ConfirmSheet({
         ratingSource: candidate?.rating?.source ?? null,
       },
       copy: ownership === "owned" ? copyDraftToInput(copy) : null,
-      myStatus: ownership === "owned" ? (myStatus === "" ? null : myStatus) : "want",
+      myStatus: ownership === "wishlist" ? "want" : myStatus === "" ? null : myStatus,
+      borrowedFrom: ownership === "borrowed" ? { who: borrowerChoice(lender) ?? {}, dueDate: dueBack } : null,
       force,
     } as const;
   }
@@ -161,26 +172,48 @@ export function ConfirmSheet({
 
               <fieldset className="flex flex-col gap-2">
                 <legend className="mb-1 text-sm font-semibold">Where does it go?</legend>
-                <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Owned or wishlist">
-                  {(["owned", "wishlist"] as const).map((o) => (
+                <div className={cn("grid gap-2", borrowers ? "grid-cols-3" : "grid-cols-2")} role="radiogroup" aria-label="Owned, wishlist or borrowed">
+                  {(borrowers ? (["owned", "wishlist", "borrowed"] as const) : (["owned", "wishlist"] as const)).map((o) => (
                     <label key={o} className="cursor-pointer">
                       <input type="radio" name="ownership" value={o} checked={ownership === o} onChange={() => setOwnership(o)} className="peer sr-only" />
                       <span
                         className={cn(
-                          "flex h-11 items-center justify-center rounded-lg border border-input bg-card text-[0.9375rem] font-medium transition-colors peer-checked:border-primary peer-checked:bg-primary peer-checked:text-primary-foreground peer-focus-visible:ring-2 peer-focus-visible:ring-ring hover:border-foreground/40",
+                          "flex h-11 items-center justify-center rounded-lg border border-input bg-card px-1 text-center text-sm leading-tight font-medium sm:text-[0.9375rem] transition-colors peer-checked:border-primary peer-checked:bg-primary peer-checked:text-primary-foreground peer-focus-visible:ring-2 peer-focus-visible:ring-ring hover:border-foreground/40",
                         )}
                       >
-                        {o === "owned" ? "On my shelf" : "On my wishlist"}
+                        {o === "owned" ? "On my shelf" : o === "wishlist" ? "On my wishlist" : "I borrowed this"}
                       </span>
                     </label>
                   ))}
                 </div>
               </fieldset>
 
+              {ownership === "borrowed" && borrowers && (
+                <section className="flex flex-col gap-4">
+                  <h3 className="font-display text-lg font-medium">Who lent it?</h3>
+                  <BorrowerPicker borrowers={borrowers} value={lender} onChange={setLender} label="Borrowed from" />
+                  <Field label="Due back (optional)" hint="It shows as Overdue the day after.">
+                    {(id) => <Input id={id} type="date" value={dueBack} onChange={(e) => setDueBack(e.target.value)} />}
+                  </Field>
+                  <Field label="Your reading status">
+                    {(id) => (
+                      <NativeSelect id={id} value={myStatus} onChange={(e) => setMyStatus(e.target.value as Status | "")}>
+                        <option value="">Not set</option>
+                        {STATUSES.map((s) => (
+                          <option key={s} value={s}>
+                            {STATUS_LABEL[s]}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                    )}
+                  </Field>
+                </section>
+              )}
+
               {ownership === "owned" && (
                 <section className="flex flex-col gap-4">
                   <h3 className="font-display text-lg font-medium">First copy</h3>
-                  <CopyFields draft={copy} onChange={setCopy} />
+                  <CopyFields draft={copy} onChange={setCopy} currency={currency} />
                   <Field label="Your reading status">
                     {(id) => (
                       <NativeSelect id={id} value={myStatus} onChange={(e) => setMyStatus(e.target.value as Status | "")}>
@@ -220,8 +253,8 @@ export function ConfirmSheet({
               )}
             </div>
             <div className="border-t border-border bg-card px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-              <Button type="submit" size="lg" className="w-full" disabled={pending || title === ""}>
-                {pending ? "Adding…" : ownership === "owned" ? "Add to my shelf" : "Add to my wishlist"}
+              <Button type="submit" size="lg" className="w-full" disabled={pending || title === "" || (ownership === "borrowed" && !borrowerChoice(lender))}>
+                {pending ? "Adding…" : ownership === "owned" ? "Add to my shelf" : ownership === "wishlist" ? "Add to my wishlist" : "Add as borrowed"}
               </Button>
             </div>
           </form>

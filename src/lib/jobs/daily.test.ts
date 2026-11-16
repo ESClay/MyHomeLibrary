@@ -22,7 +22,10 @@ describe("planTasks", () => {
     };
     const plan = planTasks({ now: NOW, records, env: ENV });
     expect(plan.due).toEqual(["scan-cleanup", "recommendations"]);
-    expect(plan.skipped).toEqual([{ task: "series-sync", reason: "not-due" }]);
+    expect(plan.skipped).toEqual([
+      { task: "series-sync", reason: "not-due" },
+      { task: "price-refresh", reason: "env-missing", missing: ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"] },
+    ]);
   });
 
   it("does not run the cleanup twice within a day", () => {
@@ -43,7 +46,10 @@ describe("planTasks", () => {
   it("skips a task whose environment variable is missing, and says which", () => {
     const plan = planTasks({ now: NOW, records: {}, env: { HARDCOVER_API_TOKEN: "x" } });
     expect(plan.due).toEqual(["scan-cleanup", "series-sync"]);
-    expect(plan.skipped).toEqual([{ task: "recommendations", reason: "env-missing", missing: ["ANTHROPIC_API_KEY"] }]);
+    expect(plan.skipped).toEqual([
+      { task: "price-refresh", reason: "env-missing", missing: ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"] },
+      { task: "recommendations", reason: "env-missing", missing: ["ANTHROPIC_API_KEY"] },
+    ]);
     expect(planTasks({ now: NOW, records: {}, env: {} }).due).toEqual(["scan-cleanup"]);
   });
 });
@@ -73,6 +79,7 @@ describe("runDaily", () => {
         seen.push(ctx.cursor);
         return { status: "complete" as const };
       }),
+      "price-refresh": ok,
       recommendations: ok,
     };
     const out = await runDaily({ store, runners, env: ENV, budgetMs: 100_000, now: () => NOW });
@@ -84,7 +91,7 @@ describe("runDaily", () => {
 
   it("keeps the cursor and no completion time on a partial run", async () => {
     const { store, saves } = memoryStore();
-    const runners = { "scan-cleanup": ok, "series-sync": async () => ({ status: "partial" as const, cursor: { after: "lib-9" }, detail: { left: 3 } }), recommendations: ok };
+    const runners = { "scan-cleanup": ok, "series-sync": async () => ({ status: "partial" as const, cursor: { after: "lib-9" }, detail: { left: 3 } }), "price-refresh": ok, recommendations: ok };
     await runDaily({ store, runners, env: ENV, budgetMs: 100_000, now: () => NOW });
     const row = saves.find((s) => s.task === "series-sync")!.row;
     expect(row).toMatchObject({ lastStatus: "partial", cursor: { after: "lib-9" }, detail: { left: 3 } });
@@ -93,7 +100,7 @@ describe("runDaily", () => {
 
   it("a failing task is recorded and does not stop the others", async () => {
     const { store, saves } = memoryStore();
-    const runners = { "scan-cleanup": async () => { throw new Error("storage down"); }, "series-sync": ok, recommendations: ok };
+    const runners = { "scan-cleanup": async () => { throw new Error("storage down"); }, "series-sync": ok, "price-refresh": ok, recommendations: ok };
     const out = await runDaily({ store, runners, env: ENV, budgetMs: 100_000, now: () => NOW });
     expect(out.ran.map((r) => r.status)).toEqual(["error", "complete", "complete"]);
     expect(saves[0]).toMatchObject({ task: "scan-cleanup", row: { lastStatus: "error", detail: { error: "storage down" } } });
@@ -102,7 +109,7 @@ describe("runDaily", () => {
   it("does not run, or record, a task whose env var is missing", async () => {
     const { store, saves } = memoryStore();
     const rec2 = vi.fn(ok);
-    const out = await runDaily({ store, runners: { "scan-cleanup": ok, "series-sync": ok, recommendations: rec2 }, env: { HARDCOVER_API_TOKEN: "x" }, budgetMs: 100_000, now: () => NOW });
+    const out = await runDaily({ store, runners: { "scan-cleanup": ok, "series-sync": ok, "price-refresh": ok, recommendations: rec2 }, env: { HARDCOVER_API_TOKEN: "x" }, budgetMs: 100_000, now: () => NOW });
     expect(rec2).not.toHaveBeenCalled();
     expect(out.skipped).toContainEqual({ task: "recommendations", reason: "env-missing", missing: ["ANTHROPIC_API_KEY"] });
     expect(saves.map((s) => s.task)).toEqual(["scan-cleanup", "series-sync"]);
@@ -115,7 +122,7 @@ describe("runDaily", () => {
       deadlines[name] = ctx.deadline - NOW;
       return { status: "complete" };
     };
-    await runDaily({ store, runners: { "scan-cleanup": runner("a"), "series-sync": runner("b"), recommendations: runner("c") }, env: ENV, budgetMs: 100_000, now: () => NOW });
+    await runDaily({ store, runners: { "scan-cleanup": runner("a"), "series-sync": runner("b"), "price-refresh": runner("p"), recommendations: runner("c") }, env: ENV, budgetMs: 100_000, now: () => NOW });
     expect(deadlines).toEqual({ a: 10_000, b: 40_000, c: 100_000 });
   });
 
@@ -127,7 +134,7 @@ describe("runDaily", () => {
       return { status: "complete" };
     };
     const rec3 = vi.fn(ok);
-    const out = await runDaily({ store, runners: { "scan-cleanup": slow, "series-sync": rec3, recommendations: rec3 }, env: ENV, budgetMs: 100_000, now: () => t });
+    const out = await runDaily({ store, runners: { "scan-cleanup": slow, "series-sync": rec3, "price-refresh": rec3, recommendations: rec3 }, env: ENV, budgetMs: 100_000, now: () => t });
     expect(out.ran.map((r) => r.status)).toEqual(["complete", "not-run", "not-run"]);
     expect(rec3).not.toHaveBeenCalled();
     expect(saves.map((s) => s.task)).toEqual(["scan-cleanup"]);

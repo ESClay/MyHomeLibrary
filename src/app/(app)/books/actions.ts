@@ -7,6 +7,7 @@ import { findDuplicates, type DuplicateMatch } from "@/lib/duplicates";
 import { refreshFor } from "@/lib/metadata";
 import { authorizeBook, canEdit, fail, firstIssue, roleInLibrary, type ActionResult } from "@/lib/books/access";
 import { loadDuplicateCandidates } from "@/lib/books/data";
+import { loanError, parseDue, resolveBorrower } from "@/lib/loans/server";
 import { attachBooksToShelves } from "@/lib/shelves/assign";
 import {
   addReadSchema,
@@ -72,11 +73,15 @@ export async function checkDuplicates(
 export async function createBook(input: CreateBookInput): Promise<CreateBookResult> {
   const parsed = createBookSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: firstIssue(parsed.error) };
-  const { libraryId, book, provider, copy, myStatus, force, shelfIds } = parsed.data;
+  const { libraryId, book, provider, copy, myStatus, force, shelfIds, borrowedFrom } = parsed.data;
 
   const user = await requireUser();
   const role = await roleInLibrary(libraryId, user.id);
   if (!canEdit(role)) return { ok: false, error: role ? NOT_EDITOR : "You are not a member of that library." };
+
+  if (book.ownership === "borrowed" && !borrowedFrom) return { ok: false, error: "Say who you borrowed it from." };
+  const borrowDue = parseDue(borrowedFrom?.dueDate);
+  if (!borrowDue.ok) return { ok: false, error: borrowDue.error };
 
   if (!force) {
     const existing = await loadDuplicateCandidates(libraryId, { title: book.title, isbn13: book.isbn13 });
@@ -121,6 +126,17 @@ export async function createBook(input: CreateBookInput): Promise<CreateBookResu
     if (copyError) {
       await supabase.from("books").delete().eq("id", created.id);
       return { ok: false, error: copyError.message };
+    }
+  }
+
+  if (book.ownership === "borrowed" && borrowedFrom) {
+    const lender = await resolveBorrower(supabase, libraryId, borrowedFrom.who);
+    const { error: loanInsertError } = lender.ok
+      ? await supabase.from("loans").insert({ direction: "in", book_id: created.id, borrower_id: lender.id, due_at: borrowDue.dueAt })
+      : { error: { message: lender.error, code: undefined } };
+    if (loanInsertError) {
+      await supabase.from("books").delete().eq("id", created.id);
+      return { ok: false, error: loanError(loanInsertError.message, loanInsertError.code) };
     }
   }
 

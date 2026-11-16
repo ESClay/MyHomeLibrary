@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { borrowerChoiceSchema, dueDate } from "@/lib/loans/schemas";
 import { CONDITIONS, FORMATS, OWNERSHIPS, STATUSES } from "./constants";
 
 const uuid = z.string().uuid();
@@ -103,6 +104,8 @@ export const createBookSchema = z.object({
   force: z.boolean().optional(),
   /** manual shelves to put the new book on (the "Put on shelves" picker) */
   shelfIds: z.array(uuid).max(20).optional(),
+  /** for a book marked "borrowed": who it is borrowed from and when it is due back */
+  borrowedFrom: z.object({ who: borrowerChoiceSchema, dueDate }).nullable().optional(),
 });
 export type CreateBookInput = z.input<typeof createBookSchema>;
 

@@ -10,13 +10,16 @@ import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/shelf";
 import { getLibraryContext } from "@/lib/library";
 import { createClient } from "@/lib/supabase/server";
+import Link from "next/link";
+import { BarChart3, ChevronRight, Users } from "lucide-react";
+import { PriceRegionForm, RegionForm } from "./region-forms";
 import { signOut } from "../../(auth)/actions";
 import { removeMember, renameLibrary, revokeInvite } from "./actions";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
-  const { user, current } = await getLibraryContext();
+  const { user, current, region, locale } = await getLibraryContext();
   if (!current) return null; // The layout shows the create-library prompt.
 
   const isOwner = current.role === "owner";
@@ -64,6 +67,43 @@ export default async function SettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Prices</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isOwner ? (
+            <PriceRegionForm libraryId={current.id} priceRegion={current.priceRegion} locale={locale} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {current.priceRegion ? `Prices in this library use the ${current.priceRegion.replace("EBAY_", "")} marketplace. Only the owner can change that.` : "The owner has not chosen a price region yet, so prices are off."}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {[
+          { href: "/stats", title: "Stats", body: "What you read, what the shelves are worth, and how the library grows.", Icon: BarChart3 },
+          { href: "/borrowers", title: "Borrowers", body: "Who has your books, and who you borrowed from.", Icon: Users },
+        ].map(({ href, title, body, Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            className="panel group flex min-h-[4.5rem] items-center gap-3 p-4 transition-[transform,border-color] duration-[var(--dur-fast)] hover:-translate-y-0.5 hover:border-foreground/30 active:translate-y-px"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Icon className="size-5" strokeWidth={1.5} aria-hidden />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-lg leading-snug font-medium">{title}</span>
+              <span className="text-sm text-muted-foreground">{body}</span>
+            </span>
+            <ChevronRight aria-hidden className="size-5 shrink-0 text-muted-foreground transition-transform duration-[var(--dur-fast)] group-hover:translate-x-0.5" />
+          </Link>
+        ))}
+      </div>
 
       <Card>
         <CardHeader>
@@ -147,6 +187,15 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <CreateLibraryForm submitLabel="Create another library" />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Region and language</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RegionForm region={region ?? "EBAY_US"} locale={locale} />
         </CardContent>
       </Card>
 

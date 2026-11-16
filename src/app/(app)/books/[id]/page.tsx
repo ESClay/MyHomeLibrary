@@ -9,12 +9,17 @@ import { Stars } from "@/components/stars";
 import { canEdit } from "@/lib/books/access";
 import { OWNERSHIP_LABEL, RATING_SOURCE_LABEL, STATUS_LABEL } from "@/lib/books/constants";
 import { loadBookDetail } from "@/lib/books/data";
+import { LoanLine, LoanTag } from "@/components/loan-badge";
 import { timesRead } from "@/lib/format";
+import { activeLoans } from "@/lib/loans/rules";
+import { loadBorrowers } from "@/lib/loans/data";
+import { formatDate } from "@/lib/regions";
 import { getLibraryContext } from "@/lib/library";
 import { loadShelvesForBook } from "@/lib/shelves/data";
 import { canChangeShelfBooks } from "@/lib/shelves/permissions";
 import { BookActions, DeleteBook } from "./book-actions";
 import { BookShelves } from "./book-shelves";
+import { BorrowedReturn } from "./borrowed-return";
 import { CopiesSection } from "./copies-section";
 import { Description } from "./description";
 import { MyShelf, OtherRating } from "./my-shelf";
@@ -32,11 +37,16 @@ export default async function BookPage({ params }: Props) {
   const { id } = await params;
   if (!UUID.test(id)) notFound();
 
-  const { user } = await getLibraryContext();
+  const { user, locale, currency } = await getLibraryContext();
   const [detail, bookShelves] = await Promise.all([loadBookDetail(id, user.id), loadShelvesForBook(id)]);
   if (!detail) notFound();
 
-  const { book, copies, me, others, role } = detail;
+  const { book, copies, me, others, role, loans, priceHistory, priceRegion } = detail;
+  const borrowers = canEdit(role) ? await loadBorrowers(book.library_id) : [];
+  const now = new Date();
+  const active = activeLoans(loans, now);
+  const borrowedLoan = book.ownership === "borrowed" ? (active.find((l) => l.direction === "in") ?? null) : null;
+  const history = loans;
   const editor = canEdit(role);
   const finishedCount = (reads: typeof me.reads) => reads.filter((r) => r.finished_at).length;
   const source = book.rating_source ? (RATING_SOURCE_LABEL[book.rating_source] ?? book.rating_source) : null;
@@ -71,6 +81,7 @@ export default async function BookPage({ params }: Props) {
 
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={book.ownership === "owned" ? "default" : "secondary"}>{OWNERSHIP_LABEL[book.ownership]}</Badge>
+            {active.length > 0 && <LoanTag loan={active[0]} />}
             {book.page_count && <Badge variant="outline">{book.page_count} pages</Badge>}
             {book.published_date && <Badge variant="outline">{book.published_date.slice(0, 4)}</Badge>}
             {book.genres.slice(0, 3).map((g) => (
@@ -90,6 +101,16 @@ export default async function BookPage({ params }: Props) {
               </p>
             </div>
           )}
+
+          {active.length > 0 && (
+            <p className="flex flex-col text-sm">
+              {active.map((l) => (
+                <LoanLine key={l.id} loan={l} className="whitespace-normal" />
+              ))}
+            </p>
+          )}
+
+          {editor && borrowedLoan && <BorrowedReturn bookId={book.id} title={book.title} />}
 
           {editor && <BookActions book={book} />}
         </div>
@@ -143,9 +164,43 @@ export default async function BookPage({ params }: Props) {
         </Section>
       )}
 
-      <Section title="Copies" eyebrow={copies.length === 1 ? "1 copy" : `${copies.length} copies`}>
-        <CopiesSection bookId={book.id} copies={copies} canEdit={editor} />
-      </Section>
+      {book.ownership !== "borrowed" && (
+        <Section title="Copies" eyebrow={copies.length === 1 ? "1 copy" : `${copies.length} copies`}>
+          <CopiesSection
+            bookId={book.id}
+            copies={copies}
+            canEdit={editor}
+            loans={loans}
+            history={priceHistory}
+            borrowers={borrowers.map((b) => ({ id: b.id, name: b.name }))}
+            currency={currency}
+            priceRegion={priceRegion}
+            nowIso={now.toISOString()}
+          />
+        </Section>
+      )}
+
+      {history.length > 0 && (
+        <Section title="Lending history" eyebrow={<Link href="/borrowers" className="underline decoration-gilt underline-offset-4">All borrowers</Link>}>
+          <ul className="flex flex-col divide-y divide-border">
+            {history.map((l) => {
+              const live = active.find((a) => a.id === l.id);
+              return (
+                <li key={l.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2.5 text-[0.9375rem]">
+                  <span>
+                    {l.direction === "out" ? "Lent to" : "Borrowed from"} <strong className="font-semibold">{l.borrowerName}</strong>
+                  </span>
+                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                    {live && <LoanTag loan={live} />}
+                    {formatDate(l.loanedAt, locale)}
+                    {l.returnedAt ? ` to ${formatDate(l.returnedAt, locale)}` : l.dueAt ? `, due ${formatDate(l.dueAt, locale)}` : ""}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </Section>
+      )}
 
       {(book.description || book.isbn13) && (
         <Section title="About this book">
@@ -184,7 +239,7 @@ export default async function BookPage({ params }: Props) {
   );
 }
 
-function Section({ title, eyebrow, children }: { title: string; eyebrow?: string; children: React.ReactNode }) {
+function Section({ title, eyebrow, children }: { title: string; eyebrow?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="rise panel flex flex-col gap-5 p-5 md:p-7" style={{ ["--i" as string]: 1 }}>
       <header className="flex items-baseline justify-between gap-3">

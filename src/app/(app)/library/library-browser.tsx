@@ -18,10 +18,11 @@ import {
   STATUSES,
   STATUS_LABEL,
   type Format,
-  type Ownership,
   type Status,
 } from "@/lib/books/constants";
 import {
+  LOAN_FILTERS,
+  LOAN_FILTER_LABEL,
   PAGE_SIZE,
   SORTS,
   SORT_LABEL,
@@ -30,6 +31,7 @@ import {
   libraryHref,
   type LibraryItem,
   type LibraryParams,
+  type LoanFilter,
   type Sort,
 } from "@/lib/books/library-query";
 import type { LibraryRole } from "@/lib/library";
@@ -138,6 +140,7 @@ export function LibraryBrowser({
     format: null,
     own: null,
     series: null,
+    loan: null,
     rating: null,
     q: "",
     limit: PAGE_SIZE,
@@ -223,7 +226,7 @@ export function LibraryBrowser({
               </option>
             ))}
           </FilterSelect>
-          <FilterSelect label="Owned or wishlist" value={params.own ?? ""} onChange={(v) => go({ own: (v || null) as Ownership | null })}>
+          <FilterSelect label="Owned or wishlist" value={params.own ?? ""} onChange={(v) => go({ own: (v || null) as LibraryParams["own"] })}>
             <option value="">Both</option>
             <option value="owned">{OWNERSHIP_LABEL.owned}</option>
             <option value="wishlist">{OWNERSHIP_LABEL.wishlist}</option>
@@ -233,6 +236,14 @@ export function LibraryBrowser({
             {seriesNames.map((s) => (
               <option key={s} value={s}>
                 {s}
+              </option>
+            ))}
+          </FilterSelect>
+          <FilterSelect label="Lending" value={params.loan ?? ""} onChange={(v) => go({ loan: (v || null) as LoanFilter | null })}>
+            <option value="">Any</option>
+            {LOAN_FILTERS.map((l) => (
+              <option key={l} value={l}>
+                {LOAN_FILTER_LABEL[l]}
               </option>
             ))}
           </FilterSelect>

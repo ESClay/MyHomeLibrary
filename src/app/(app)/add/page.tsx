@@ -4,6 +4,7 @@ import { Camera, ChevronRight, FileSpreadsheet, ScanBarcode } from "lucide-react
 import { PageHeader } from "@/components/shelf";
 import { canEdit } from "@/lib/books/access";
 import { getLibraryContext } from "@/lib/library";
+import { loadBorrowers } from "@/lib/loans/data";
 import { AddBook } from "./add-book";
 
 export const metadata: Metadata = { title: "Add a book" };
@@ -11,9 +12,10 @@ export const metadata: Metadata = { title: "Add a book" };
 export default async function Page({ searchParams }: { searchParams: Promise<{ isbn?: string }> }) {
   const { isbn } = await searchParams;
   const manualIsbn = isbn && /^\d{13}$/.test(isbn) ? isbn : null;
-  const { current } = await getLibraryContext();
+  const { current, currency } = await getLibraryContext();
   if (!current) return null; // The layout shows the create-library prompt.
   const editor = canEdit(current.role);
+  const borrowers = editor ? await loadBorrowers(current.id) : [];
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
@@ -74,7 +76,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ i
               <ChevronRight aria-hidden className="size-5 shrink-0 text-muted-foreground transition-transform duration-[var(--dur-fast)] group-hover:translate-x-0.5" />
             </Link>
           </div>
-          <AddBook libraryId={current.id} manualIsbn={manualIsbn} />
+          <AddBook libraryId={current.id} manualIsbn={manualIsbn} borrowers={borrowers.map((b) => ({ id: b.id, name: b.name }))} currency={currency} />
         </>
       ) : (
         <p className="panel p-5 text-base">

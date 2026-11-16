@@ -16,6 +16,7 @@ function item(over: Partial<LibraryItem> & { id: string; title: string }): Libra
     totalPaid: null,
     mine: null,
     others: [],
+    loans: [],
     ...over,
   };
 }

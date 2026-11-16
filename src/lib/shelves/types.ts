@@ -1,3 +1,4 @@
+import type { ActiveLoan } from "@/lib/loans/rules";
 import type { ShelfColor, ShelfKind, ShelfSort, ShelfVisibility } from "./constants";
 import type { ShelfRules } from "./rules";
 
@@ -18,7 +19,7 @@ export type Shelf = {
 
 export type ShelfBookRef = { shelfId: string; bookId: string; position: number };
 
-export type CoverLite = { id: string; title: string; author: string | null; coverUrl: string | null };
+export type CoverLite = { id: string; title: string; author: string | null; coverUrl: string | null; loan?: ActiveLoan | null };
 
 export type ShelfRowData = {
   shelf: Shelf;

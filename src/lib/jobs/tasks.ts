@@ -1,6 +1,9 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RecommendError } from "@/lib/ai/recommend";
+import { getEbayClient } from "@/lib/pricing/ebay";
+import { recordNoPrice, recordPrice } from "@/lib/pricing/record";
+import { runPriceRefresh, type Candidate } from "@/lib/pricing/refresh";
 import { CapReached, NotEnoughSignal, generateSet } from "@/lib/discover/recs";
 import { syncLibrarySeries } from "@/lib/discover/series-sync";
 import type { RunStore, TaskRunner } from "./daily";
@@ -156,4 +159,33 @@ export function recommendationsTask(admin: SupabaseClient): TaskRunner {
     }
     return { status: "complete", detail: { generated, notEnough, tokens, errors } };
   };
+}
+
+/**
+ * Daily price refresh. Selects physical copies with an ISBN that were last priced more than 7 days ago (or never), stalest first,
+ * across libraries, skipping libraries with no price_region; see lib/pricing/refresh.ts for the call and time limits.
+ */
+export function priceRefreshTask(admin: SupabaseClient): TaskRunner {
+  const ebay = getEbayClient();
+  return ({ deadline, cursor, now }) =>
+    runPriceRefresh(
+      {
+        async fetchCandidates(cutoffIso, limit) {
+          const { data, error } = await admin.rpc("price_refresh_candidates", { cutoff: cutoffIso, max_rows: limit });
+          if (error) throw new Error(`price_refresh_candidates: ${error.message}`);
+          return ((data ?? []) as { copy_id: string; format: string; condition: Candidate["condition"]; isbn: string; price_region: string }[]).map((r) => ({
+            copyId: r.copy_id,
+            format: r.format,
+            condition: r.condition,
+            isbn: r.isbn,
+            priceRegion: r.price_region,
+          }));
+        },
+        price: (req) => ebay.price(req),
+        recordPriced: (c, res) => recordPrice(admin, c.copyId, res, new Date(now())),
+        recordNoPrice: (c) => recordNoPrice(admin, c.copyId, new Date(now())),
+        now,
+      },
+      { deadline, cursor },
+    );
 }

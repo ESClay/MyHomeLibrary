@@ -64,8 +64,23 @@ Requires Node 20.19+ and npm.
 
 - Needs `ANTHROPIC_API_KEY`. The model is set in one place (`IDENTIFY_MODEL` in `src/lib/ai/identify.ts`). Each person gets 50 photo reads per rolling 24 hours (`DAILY_SCAN_CAP` in `src/lib/scan/photo.ts`); token usage per job is stored on `scan_jobs`.
 - Photos go to the private `scans` bucket (`<library_id>/<user_id>/<uuid>.jpg`) and are deleted through the Storage API once the review is saved or discarded, or when the person leaves the page (best effort).
-- Safety net: `GET /api/cron/scan-cleanup` (header `Authorization: Bearer $CRON_SECRET`, needs `SUPABASE_SERVICE_ROLE_KEY`) removes photos older than 24 hours that were never cleared. It is not in `vercel.json` yet; schedule it daily, for example `{"crons":[{"path":"/api/cron/scan-cleanup","schedule":"0 4 * * *"}]}`.
+- Safety net: the daily cron job (`/api/cron/daily`, see below) removes photos older than 24 hours that were never cleared. `GET /api/cron/scan-cleanup` (header `Authorization: Bearer $CRON_SECRET`) still runs that step on its own.
 - `/api/scan/[id]` sets `maxDuration = 300`, which Vercel honours up to your plan's limit.
+
+## Daily background job
+
+`vercel.json` schedules `GET /api/cron/daily` at 04:30 UTC. Vercel sends `Authorization: Bearer $CRON_SECRET`; the route also needs `SUPABASE_SERVICE_ROLE_KEY`. It runs whatever is due: scan-photo cleanup (daily), series re-sync (weekly), eBay price refresh (weekly per copy) and recommendation refresh (weekly). A task whose keys are missing is skipped without failing the others.
+
+## Market prices (eBay)
+
+Prices come from the eBay Browse API and need a **production** keyset. Until `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET` are set, price checks show as not configured and the daily job skips them.
+
+1. Create a free developer account at <https://developer.ebay.com>.
+2. Go to *Application Keys* (Hi, name > Application Keysets) and create a **Production** keyset. Sandbox returns fake listings.
+3. When eBay asks about *Marketplace account deletion* notifications, choose the **exemption**: this app only reads public listings and stores no eBay user data.
+4. Copy the **App ID (Client ID)** and **Cert ID (Client Secret)**.
+5. Add them as `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET` to `.env.local` and to Vercel (*Project Settings > Environment Variables*, all environments), then redeploy.
+6. Check a price on a physical copy with an ISBN. Each library prices in its own region (Settings > Library), set from the owner's region.
 
 ## Project layout
 

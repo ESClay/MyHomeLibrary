@@ -1,7 +1,8 @@
 /** Which daily-cron tasks are due. Pure: the clock, the last-run records and the environment are passed in. */
 
-export type TaskId = "scan-cleanup" | "series-sync" | "recommendations";
-export const TASK_ORDER: TaskId[] = ["scan-cleanup", "series-sync", "recommendations"];
+export type TaskId = "scan-cleanup" | "series-sync" | "price-refresh" | "recommendations";
+// Price refresh runs before recommendations, which stay last so they keep getting whatever time is left over.
+export const TASK_ORDER: TaskId[] = ["scan-cleanup", "series-sync", "price-refresh", "recommendations"];
 
 export type RunStatus = "complete" | "partial" | "error" | "skipped";
 
@@ -30,6 +31,8 @@ export type TaskDef = {
 export const TASKS: Record<TaskId, TaskDef> = {
   "scan-cleanup": { label: "Scan photo cleanup", intervalMs: 20 * HOUR, retryMs: 20 * HOUR, requiredEnv: [], budgetShare: 0.1 },
   "series-sync": { label: "Series re-sync", intervalMs: 6.5 * DAY, retryMs: 20 * HOUR, requiredEnv: ["HARDCOVER_API_TOKEN"], budgetShare: 0.4 },
+  // Daily: every physical copy not priced for 7 days, stalest first, within a per-run call budget (see lib/pricing/refresh.ts).
+  "price-refresh": { label: "Price refresh", intervalMs: 20 * HOUR, retryMs: 20 * HOUR, requiredEnv: ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"], budgetShare: 0.2 },
   recommendations: { label: "Recommendation refresh", intervalMs: 6.5 * DAY, retryMs: 20 * HOUR, requiredEnv: ["ANTHROPIC_API_KEY"], budgetShare: 0.5 },
 };
 

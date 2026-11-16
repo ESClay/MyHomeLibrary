@@ -1,0 +1,9 @@
+{
+  "total": 2,
+  "limit": 50,
+  "offset": 0,
+  "itemSummaries": [
+    { "itemId": "v1|220000000001|0", "title": "Dune hardcover", "price": { "value": "30.00", "currency": "CAD" }, "conditionId": "2750", "buyingOptions": ["FIXED_PRICE"] },
+    { "itemId": "v1|220000000002|0", "title": "Dune hardcover like new", "price": { "value": "34.00", "currency": "CAD" }, "conditionId": "2750", "buyingOptions": ["FIXED_PRICE"] }
+  ]
+}

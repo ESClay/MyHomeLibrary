@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpen, Compass, Library, Plus, User } from "lucide-react";
+import { BarChart3, BookOpen, Compass, Library, Plus, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
@@ -12,6 +12,9 @@ const items = [
   { href: "/discover", label: "Discover", icon: Compass },
   { href: "/settings", label: "Profile", icon: User },
 ] as const;
+
+/** The desktop sidebar has room for Stats; on phones it is reached from Profile, so the five tabs stay uncrowded. */
+const sidebarItems = [...items.slice(0, 4), { href: "/stats", label: "Stats", icon: BarChart3 }, items[4]] as const;
 
 function useActive() {
   const pathname = usePathname();
@@ -78,7 +81,7 @@ export function SidebarNav() {
   return (
     <nav aria-label="Primary">
       <ul className="flex flex-col gap-1">
-        {items.map(({ href, label, icon: Icon }) => {
+        {sidebarItems.map(({ href, label, icon: Icon }) => {
           const active = isActive(href);
           return (
             <li key={href}>

@@ -10,6 +10,7 @@ import { mergeMetadata } from "@/lib/metadata/merge";
 import type { BookMetadata } from "@/lib/metadata/types";
 import { announce, type Suggestion } from "@/lib/typeahead";
 import { cn } from "@/lib/utils";
+import type { BorrowerOption } from "@/components/borrower-picker";
 import { ConfirmSheet } from "./confirm-sheet";
 import { useTypeahead } from "./use-typeahead";
 
@@ -22,7 +23,7 @@ async function fetchMetadata(params: string, signal?: AbortSignal): Promise<Book
   return body.results;
 }
 
-export function AddBook({ libraryId, manualIsbn = null }: { libraryId: string; manualIsbn?: string | null }) {
+export function AddBook({ libraryId, manualIsbn = null, borrowers, currency }: { libraryId: string; manualIsbn?: string | null; borrowers: BorrowerOption[]; currency: string | null }) {
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [results, setResults] = useState<BookMetadata[]>([]);
@@ -218,7 +219,7 @@ export function AddBook({ libraryId, manualIsbn = null }: { libraryId: string; m
         </Button>
       </div>
 
-      {sheet && <ConfirmSheet key={sheet.candidate?.isbn13 ?? sheet.candidate?.title ?? "manual"} libraryId={libraryId} candidate={sheet.candidate} initialIsbn={sheet.isbn} onClose={() => setSheet(null)} />}
+      {sheet && <ConfirmSheet key={sheet.candidate?.isbn13 ?? sheet.candidate?.title ?? "manual"} libraryId={libraryId} borrowers={borrowers} currency={currency} candidate={sheet.candidate} initialIsbn={sheet.isbn} onClose={() => setSheet(null)} />}
     </div>
   );
 }

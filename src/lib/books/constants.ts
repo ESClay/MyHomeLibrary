@@ -26,9 +26,9 @@ export const STATUS_LABEL: Record<Status, string> = {
   dnf: "Did not finish",
 };
 
-export const OWNERSHIPS = ["owned", "wishlist"] as const;
+export const OWNERSHIPS = ["owned", "wishlist", "borrowed"] as const;
 export type Ownership = (typeof OWNERSHIPS)[number];
-export const OWNERSHIP_LABEL: Record<Ownership, string> = { owned: "Owned", wishlist: "Wishlist" };
+export const OWNERSHIP_LABEL: Record<Ownership, string> = { owned: "Owned", wishlist: "Wishlist", borrowed: "Borrowed" };
 
 export const RATING_SOURCE_LABEL: Record<string, string> = {
   hardcover: "Hardcover",

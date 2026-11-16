@@ -5,6 +5,7 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RegionSelect } from "@/components/region-select";
 import { signIn, signUp, type AuthState } from "./actions";
 
 export function AuthForm({ mode, next }: { mode: "sign-in" | "sign-up"; next: string }) {
@@ -40,6 +41,7 @@ export function AuthForm({ mode, next }: { mode: "sign-in" | "sign-up"; next: st
          
         />
       </div>
+      {isSignUp && <RegionSelect />}
       {state.error && (
         <p role="alert" className="rounded-lg border border-destructive/40 px-3 py-2 text-sm text-destructive">
           {state.error}

@@ -4,7 +4,7 @@ import { buildReadingGroups, buildShelfRows, orderManual, sortShelves } from "./
 import type { Shelf } from "./types";
 
 function item(over: Partial<LibraryItem> & { id: string; title: string }): LibraryItem {
-  return { authors: [], seriesName: null, seriesPosition: null, coverUrl: null, ownership: "owned", publicRating: null, createdAt: "2026-01-01T00:00:00Z", formats: [], totalPaid: null, mine: null, others: [], ...over };
+  return { authors: [], seriesName: null, seriesPosition: null, coverUrl: null, ownership: "owned", publicRating: null, createdAt: "2026-01-01T00:00:00Z", formats: [], totalPaid: null, mine: null, others: [], loans: [], ...over };
 }
 const shelf = (over: Partial<Shelf>): Shelf => ({ id: "s", libraryId: "l", name: "S", color: "spine-1", icon: null, visibility: "shared", kind: "manual", rules: null, sort: "title", sortOrder: 1024, createdBy: "u", createdAt: "2026-01-01", ...over });
 

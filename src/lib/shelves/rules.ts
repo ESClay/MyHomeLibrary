@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FORMATS, OWNERSHIPS, OWNERSHIP_LABEL, FORMAT_LABEL, STATUSES, STATUS_LABEL } from "@/lib/books/constants";
+import { FORMATS, OWNERSHIP_LABEL, FORMAT_LABEL, STATUSES, STATUS_LABEL } from "@/lib/books/constants";
 import {
   MAX_LIMIT,
   defaultDir,
@@ -17,7 +17,7 @@ const shape = {
   my: z.enum([...STATUSES, "none"]),
   partner: z.enum(STATUSES),
   format: z.enum(FORMATS),
-  own: z.enum(OWNERSHIPS),
+  own: z.enum(["owned", "wishlist"]),
   series: z.string().trim().min(1).max(200),
   rating: z.union([z.literal("unrated"), z.number().min(0.5).max(5)]),
 } as const;

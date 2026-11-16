@@ -1,3 +1,4 @@
+import type { ActiveLoan } from "@/lib/loans/rules";
 import { STATUSES, FORMATS, type Format, type Ownership, type Status } from "./constants";
 
 /** One book as the library list needs it. */
@@ -16,7 +17,13 @@ export type LibraryItem = {
   totalPaid: number | null;
   mine: { status: Status; rating: number | null } | null;
   others: { userId: string; status: Status }[];
+  /** Loans still out (lent by us, or borrowed by us), most urgent first. */
+  loans: ActiveLoan[];
 };
+
+export const LOAN_FILTERS = ["out", "overdue", "borrowed"] as const;
+export type LoanFilter = (typeof LOAN_FILTERS)[number];
+export const LOAN_FILTER_LABEL: Record<LoanFilter, string> = { out: "On loan", overdue: "Overdue", borrowed: "Borrowed" };
 
 export const SORTS = ["added", "title", "author", "series", "myrating", "rating", "price"] as const;
 export type Sort = (typeof SORTS)[number];
@@ -53,8 +60,10 @@ export type LibraryParams = {
   /** status of any other member */
   partner: Status | null;
   format: Format | null;
-  own: Ownership | null;
+  own: "owned" | "wishlist" | null;
   series: string | null;
+  /** lending: lent out, overdue, or borrowed by us */
+  loan: LoanFilter | null;
   /** minimum my-rating, or "unrated" */
   rating: number | "unrated" | null;
   sort: Sort;
@@ -88,6 +97,7 @@ export function parseLibraryParams(raw: Raw): LibraryParams {
     format: oneOf(one(raw, "format"), FORMATS),
     own: oneOf(one(raw, "own"), ["owned", "wishlist"] as const),
     series: one(raw, "series") ?? null,
+    loan: oneOf(one(raw, "loan"), LOAN_FILTERS),
     rating:
       ratingRaw === "unrated"
         ? "unrated"
@@ -110,6 +120,7 @@ export function libraryHref(params: LibraryParams, overrides: Partial<LibraryPar
   if (p.format) sp.set("format", p.format);
   if (p.own) sp.set("own", p.own);
   if (p.series) sp.set("series", p.series);
+  if (p.loan) sp.set("loan", p.loan);
   if (p.rating !== null) sp.set("rating", String(p.rating));
   if (p.sort !== "added") sp.set("sort", p.sort);
   if (p.dir !== DEFAULT_DIR[p.sort]) sp.set("dir", p.dir);
@@ -119,7 +130,7 @@ export function libraryHref(params: LibraryParams, overrides: Partial<LibraryPar
 }
 
 export function activeFilterCount(p: LibraryParams): number {
-  return [p.my, p.partner, p.format, p.own, p.series, p.rating].filter((v) => v !== null).length;
+  return [p.my, p.partner, p.format, p.own, p.series, p.loan, p.rating].filter((v) => v !== null).length;
 }
 
 const fold = (s: string) =>
@@ -144,6 +155,9 @@ export function matchesFilters(item: LibraryItem, p: LibraryParams): boolean {
   if (p.format && !item.formats.includes(p.format)) return false;
   if (p.own && item.ownership !== p.own) return false;
   if (p.series && item.seriesName !== p.series) return false;
+  if (p.loan === "out" && !item.loans.some((l) => l.direction === "out")) return false;
+  if (p.loan === "overdue" && !item.loans.some((l) => l.overdue)) return false;
+  if (p.loan === "borrowed" && item.ownership !== "borrowed") return false;
   if (p.rating === "unrated") {
     if (item.mine?.rating != null) return false;
   } else if (p.rating !== null) {

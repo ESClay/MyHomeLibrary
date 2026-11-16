@@ -4,6 +4,7 @@ import {
   defaultDir,
   type LibraryItem,
 } from "@/lib/books/library-query";
+import { primaryLoan } from "@/lib/loans/rules";
 import { ROW_COVERS, SHELF_SORT_TO_LIBRARY, type ShelfSort } from "./constants";
 import { paramsFromRules } from "./rules";
 import type { CoverLite, ReadingGroup, Shelf, ShelfBookRef, ShelfRowData } from "./types";
@@ -13,6 +14,7 @@ export const toCover = (i: LibraryItem): CoverLite => ({
   title: i.title,
   author: i.authors[0] ?? null,
   coverUrl: i.coverUrl,
+  loan: primaryLoan(i.loans),
 });
 
 /** A manual shelf's books in the shelf's sort. `custom` follows the stored positions. */

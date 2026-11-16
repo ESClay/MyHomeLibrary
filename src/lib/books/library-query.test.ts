@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PAGE_SIZE,
+  activeFilterCount,
   applyLibraryQuery,
   libraryHref,
   parseLibraryParams,
@@ -20,6 +21,7 @@ function item(over: Partial<LibraryItem> & { id: string; title: string }): Libra
     totalPaid: null,
     mine: null,
     others: [],
+    loans: [],
     ...over,
   };
 }
@@ -98,5 +100,29 @@ describe("sorting", () => {
     expect(ids(q({ sort: "rating" }))).toEqual(["2", "1", "3", "4"]);
     expect(ids(q({ sort: "price" }))).toEqual(["1", "2", "3", "4"]);
     expect(ids(q({ sort: "price", dir: "asc" }))).toEqual(["2", "1", "3", "4"]);
+  });
+});
+
+describe("loan filters", () => {
+  const out = { id: "l1", direction: "out" as const, borrowerName: "Sam", dueAt: "2026-12-01T00:00:00Z", overdue: false };
+  const late = { id: "l2", direction: "out" as const, borrowerName: "Kim", dueAt: "2026-01-01T00:00:00Z", overdue: true };
+  const books = [
+    item({ id: "a", title: "A", loans: [out] }),
+    item({ id: "b", title: "B", loans: [late] }),
+    item({ id: "c", title: "C", ownership: "borrowed", loans: [{ id: "l3", direction: "in", borrowerName: "Ana", dueAt: null, overdue: false }] }),
+    item({ id: "d", title: "D" }),
+  ];
+  const ids = (loan: string) => applyLibraryQuery(books, parseLibraryParams({ loan })).map((i) => i.id).sort();
+
+  it("finds books on loan, overdue, and borrowed", () => {
+    expect(ids("out")).toEqual(["a", "b"]);
+    expect(ids("overdue")).toEqual(["b"]);
+    expect(ids("borrowed")).toEqual(["c"]);
+  });
+
+  it("ignores an unknown value and counts the filter as active", () => {
+    expect(parseLibraryParams({ loan: "nonsense" }).loan).toBeNull();
+    expect(activeFilterCount(parseLibraryParams({ loan: "out" }))).toBe(1);
+    expect(libraryHref(parseLibraryParams({ loan: "overdue" }))).toBe("/library?loan=overdue");
   });
 });

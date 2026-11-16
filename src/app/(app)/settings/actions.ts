@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/library";
+import { getRegion } from "@/lib/regions";
 import { createClient } from "@/lib/supabase/server";
 import type { ActionState } from "../actions";
 
@@ -50,4 +51,23 @@ export async function removeMember(formData: FormData) {
     .eq("library_id", String(formData.get("libraryId")))
     .eq("user_id", String(formData.get("userId")));
   revalidatePath("/settings");
+}
+
+/**
+ * Owner only (RLS): changes the marketplace, and so the currency, the library's prices use. Existing prices stay on the copies in
+ * their old currency, flagged as such, until the next price check replaces them. Nothing is deleted.
+ */
+export async function changePriceRegion(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  await requireUser();
+  const libraryId = String(formData.get("libraryId") ?? "");
+  const region = getRegion(String(formData.get("priceRegion") ?? ""));
+  if (!region) return { error: "Choose a region from the list." };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("libraries").update({ price_region: region.id }).eq("id", libraryId).select("id");
+  if (error) return { error: error.message };
+  if (!data || data.length === 0) return { error: "Only the library owner can change its price region." };
+
+  revalidatePath("/", "layout");
+  return {};
 }

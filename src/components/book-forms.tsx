@@ -1,12 +1,14 @@
 "use client";
 
 import { useId } from "react";
+import { useLocale } from "@/components/locale-provider";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
-import { CONDITIONS, CONDITION_LABEL, FORMATS, FORMAT_LABEL, type Condition, type Format } from "@/lib/books/constants";
+import { CONDITIONS, CONDITION_LABEL, FORMATS, FORMAT_LABEL, type Condition, type Format, type Ownership } from "@/lib/books/constants";
 import type { BookMetadata } from "@/lib/metadata/types";
+import { currencyLabel } from "@/lib/regions";
 
 export function Field({
   label,
@@ -73,7 +75,7 @@ export function draftFromMetadata(m: BookMetadata): BookDraft {
 const list = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 
 /** The shape the server actions validate. Empty strings become null there. */
-export function draftToFields(d: BookDraft, ownership: "owned" | "wishlist", coverUrl: string | null) {
+export function draftToFields(d: BookDraft, ownership: Ownership, coverUrl: string | null) {
   return {
     title: d.title,
     subtitle: d.subtitle,
@@ -165,7 +167,8 @@ export function copyDraftToInput(c: CopyDraft) {
   };
 }
 
-export function CopyFields({ draft, onChange }: { draft: CopyDraft; onChange: (next: CopyDraft) => void }) {
+export function CopyFields({ draft, onChange, currency }: { draft: CopyDraft; onChange: (next: CopyDraft) => void; currency?: string | null }) {
+  const locale = useLocale();
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <Field label="Format">
@@ -191,7 +194,10 @@ export function CopyFields({ draft, onChange }: { draft: CopyDraft; onChange: (n
           </NativeSelect>
         )}
       </Field>
-      <Field label="Price paid">
+      <Field
+        label={currency ? `Price paid in ${currencyLabel(currency, locale)}` : "Price paid"}
+        hint={currency ? "Enter it in your library's currency." : "Choose a price region in Settings to price this library in a currency."}
+      >
         {(id) => (
           <Input
             id={id}

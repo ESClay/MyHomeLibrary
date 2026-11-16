@@ -7,7 +7,7 @@
 -- dave (owns Lib B; accepts an invite into Lib A mid-file),
 -- eve (member of nothing, ever).
 begin;
-select plan(121);
+select plan(169);
 
 -- ---------------------------------------------------------------- fixtures
 insert into auth.users (id, aud, role, email) values
@@ -575,6 +575,191 @@ select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
 select is((select count(*)::int from public.recommendation_sets where id::text like '60000000-%'),
   0, 'a non-member sees no recommendation sets');
 reset role;
+
+-- ======================================================================= Phase 6
+-- Region/locale, prices, borrowers and loans, stats functions. Admin statements run with no signed-in user
+-- (pg_temp.act_as_admin), and dave is a viewer of Lib A by now, so eve and frank are the outsiders here.
+-- New fixtures: gina (signs up with a region), hank (signs up with junk metadata), a borrowed book, three copies,
+-- a borrower in each of Lib A and Lib B.
+select pg_temp.act_as_admin();
+insert into auth.users (id, aud, role, email, raw_user_meta_data) values
+  ('a6000000-0000-0000-0000-000000000007', 'authenticated', 'authenticated', 'gina@example.com',
+   '{"region": "EBAY_CA", "locale": "en-CA"}'),
+  ('a6000000-0000-0000-0000-000000000008', 'authenticated', 'authenticated', 'hank@example.com',
+   '{"region": "canada", "locale": "not a locale!"}');
+
+select is((select region || '/' || locale from public.profiles where id = 'a6000000-0000-0000-0000-000000000007'),
+  'EBAY_CA/en-CA', 'sign-up metadata sets the profile region and locale');
+select is((select region from public.profiles where id = 'a6000000-0000-0000-0000-000000000008'),
+  null, 'malformed region metadata is ignored instead of failing sign-up');
+select is((select locale from public.profiles where id = 'a6000000-0000-0000-0000-000000000008'),
+  null, 'malformed locale metadata is ignored');
+
+insert into public.libraries (id, name, owner_id) values
+  ('10000000-0000-0000-0000-0000000000d1', 'Lib Gina', 'a6000000-0000-0000-0000-000000000007'),
+  ('10000000-0000-0000-0000-0000000000d2', 'Lib Hank', 'a6000000-0000-0000-0000-000000000008');
+select is((select price_region from public.libraries where id = '10000000-0000-0000-0000-0000000000d1'),
+  'EBAY_CA', 'a new library prices in its creator''s region');
+select is((select price_region from public.libraries where id = '10000000-0000-0000-0000-0000000000d2'),
+  null, 'a library whose owner has no region starts with prices off');
+
+-- Fixtures in Lib A / Lib B for loans and prices.
+insert into public.books (id, library_id, title, ownership, isbn13) values
+  ('70000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000a', 'Borrowed in A', 'borrowed', null),
+  ('70000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-00000000000a', 'Owned with copies', 'owned', null);
+insert into public.copies (id, book_id, format, edition_isbn, purchase_price, current_price, current_price_currency) values
+  ('71000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000002', 'paperback', '9780441172719', 8.00, 10.00, 'CAD'),
+  ('71000000-0000-0000-0000-000000000002', '70000000-0000-0000-0000-000000000002', 'hardcover', null, 20.00, null, null),
+  ('71000000-0000-0000-0000-000000000003', '70000000-0000-0000-0000-000000000002', 'ebook', '9780441172719', 5.00, null, null);
+insert into public.borrowers (id, library_id, name) values
+  ('72000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000a', 'Sam'),
+  ('72000000-0000-0000-0000-00000000000b', '10000000-0000-0000-0000-00000000000b', 'Lib B friend');
+
+-- profiles.region: each person updates only their own
+select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
+select is(pg_temp.affected($$update public.profiles set region = 'EBAY_GB', locale = 'en-GB'
+                             where id = 'a0000000-0000-0000-0000-000000000001'$$),
+  1, 'a person can set their own region');
+select is(pg_temp.affected($$update public.profiles set region = 'EBAY_US'
+                             where id = 'b0000000-0000-0000-0000-000000000002'$$),
+  0, 'a person cannot change someone else''s region');
+select throws_ok($$update public.profiles set region = 'canada' where id = 'a0000000-0000-0000-0000-000000000001'$$,
+  '23514', null, 'a region must look like a marketplace id');
+select lives_ok($$insert into public.price_check_log (user_id) values ('a0000000-0000-0000-0000-000000000001')$$,
+  'a person can log their own price check');
+select throws_ok($$insert into public.price_check_log (user_id) values ('b0000000-0000-0000-0000-000000000002')$$,
+  '42501', null, 'a person cannot log a price check as someone else');
+reset role;
+select is((select region from public.profiles where id = 'b0000000-0000-0000-0000-000000000002'),
+  null, 'bob''s region was not touched by alice');
+
+-- Lending as an editor (bob)
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select lives_ok($$insert into public.loans (direction, copy_id, borrower_id, due_at) values
+  ('out', '71000000-0000-0000-0000-000000000001', '72000000-0000-0000-0000-000000000001', now() + interval '14 days')$$,
+  'an editor can lend a copy');
+select is((select library_id from public.loans where copy_id = '71000000-0000-0000-0000-000000000001'),
+  '10000000-0000-0000-0000-00000000000a'::uuid, 'the loan''s library is derived from its copy');
+select is((select book_id from public.loans where copy_id = '71000000-0000-0000-0000-000000000001'),
+  '70000000-0000-0000-0000-000000000002'::uuid, 'the loan''s book is derived from its copy');
+select throws_ok($$insert into public.loans (direction, copy_id, borrower_id) values
+  ('out', '71000000-0000-0000-0000-000000000001', '72000000-0000-0000-0000-000000000001')$$,
+  '23505', null, 'a copy can have only one active loan out');
+select throws_ok($$insert into public.loans (direction, copy_id, borrower_id) values
+  ('out', '71000000-0000-0000-0000-000000000002', '72000000-0000-0000-0000-00000000000b')$$,
+  '23514', null, 'a loan cannot use a borrower from another library');
+select throws_ok($$insert into public.loans (direction, borrower_id) values
+  ('out', '72000000-0000-0000-0000-000000000001')$$,
+  '23514', null, 'a loan out needs a copy');
+select lives_ok($$insert into public.borrowers (library_id, name) values ('10000000-0000-0000-0000-00000000000a', 'Kim')$$,
+  'an editor can add a borrower');
+select throws_ok($$insert into public.borrowers (library_id, name) values ('10000000-0000-0000-0000-00000000000a', ' sam ')$$,
+  '23505', null, 'a borrower name is unique within a library, ignoring case and spaces');
+
+-- an in-loan needs a borrowed book
+select throws_ok($$insert into public.loans (direction, book_id, borrower_id) values
+  ('in', '70000000-0000-0000-0000-000000000002', '72000000-0000-0000-0000-000000000001')$$,
+  '23514', null, 'a loan in needs a book marked borrowed');
+select lives_ok($$insert into public.loans (direction, book_id, borrower_id, due_at) values
+  ('in', '70000000-0000-0000-0000-000000000001', '72000000-0000-0000-0000-000000000001', now() + interval '30 days')$$,
+  'a borrowed book can have a loan in');
+select throws_ok($$insert into public.loans (direction, book_id, borrower_id) values
+  ('in', '70000000-0000-0000-0000-000000000001', '72000000-0000-0000-0000-000000000001')$$,
+  '23505', null, 'a book can be borrowed from only one person at a time');
+reset role;
+
+-- A viewer reads but cannot lend (carol)
+select pg_temp.act_as('c0000000-0000-0000-0000-000000000003');
+select is((select count(*)::int from public.loans where library_id = '10000000-0000-0000-0000-00000000000a'),
+  2, 'a viewer can read the library''s loans');
+select is((select count(*)::int from public.borrowers where library_id = '10000000-0000-0000-0000-00000000000a'),
+  2, 'a viewer can read the borrowers');
+select throws_ok($$insert into public.loans (direction, copy_id, borrower_id) values
+  ('out', '71000000-0000-0000-0000-000000000002', '72000000-0000-0000-0000-000000000001')$$,
+  '42501', null, 'a viewer cannot lend a copy');
+select throws_ok($$insert into public.borrowers (library_id, name) values ('10000000-0000-0000-0000-00000000000a', 'Viewer pal')$$,
+  '42501', null, 'a viewer cannot add a borrower');
+select is(pg_temp.affected($$update public.loans set returned_at = now() where copy_id = '71000000-0000-0000-0000-000000000001'$$),
+  0, 'a viewer cannot mark a loan returned');
+reset role;
+
+-- Outsiders see and write nothing (eve is in no library; frank owns only Lib C)
+select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
+select is((select count(*)::int from public.loans where library_id = '10000000-0000-0000-0000-00000000000a'),
+  0, 'a non-member sees no loans');
+select is((select count(*)::int from public.borrowers where library_id = '10000000-0000-0000-0000-00000000000a'),
+  0, 'a non-member sees no borrowers');
+select throws_ok($$insert into public.loans (direction, copy_id, borrower_id) values
+  ('out', '71000000-0000-0000-0000-000000000002', '72000000-0000-0000-0000-000000000001')$$,
+  '42501', null, 'a non-member cannot lend another library''s copy');
+reset role;
+
+select pg_temp.act_as('f1000000-0000-0000-0000-000000000006');
+select is((select count(*)::int from public.loans where library_id = '10000000-0000-0000-0000-00000000000a'),
+  0, 'a member of another library sees none of Lib A''s loans');
+select throws_ok($$insert into public.loans (direction, copy_id, borrower_id) values
+  ('out', '71000000-0000-0000-0000-000000000002', '72000000-0000-0000-0000-000000000001')$$,
+  '42501', null, 'a member of another library cannot lend Lib A''s copy');
+reset role;
+
+-- Dave is a viewer of Lib A and owns Lib B: he cannot lend Lib A's copy with his own library's borrower either
+select pg_temp.act_as('d0000000-0000-0000-0000-000000000004');
+select throws_ok($$insert into public.loans (direction, copy_id, borrower_id) values
+  ('out', '71000000-0000-0000-0000-000000000002', '72000000-0000-0000-0000-00000000000b')$$,
+  '23514', null, 'a loan cannot cross libraries even for someone in both');
+reset role;
+
+-- Returning frees the copy for another loan
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select is(pg_temp.affected($$update public.loans set returned_at = now() where copy_id = '71000000-0000-0000-0000-000000000001'$$),
+  1, 'an editor can mark a loan returned');
+select lives_ok($$insert into public.loans (direction, copy_id, borrower_id) values
+  ('out', '71000000-0000-0000-0000-000000000001', '72000000-0000-0000-0000-000000000001')$$,
+  'a returned copy can be lent again');
+reset role;
+
+-- Stats functions run as the caller, so row-level security applies
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select is((select copies from public.stats_value('10000000-0000-0000-0000-00000000000a', 'CAD')),
+  2::bigint, 'stats_value counts the physical owned copies a member can see (the ebook is left out)');
+select is((select est_value from public.stats_value('10000000-0000-0000-0000-00000000000a', 'CAD')),
+  10.00::numeric, 'stats_value totals only prices in the asked currency');
+select is((select unpriced from public.stats_value('10000000-0000-0000-0000-00000000000a', 'CAD')),
+  1::bigint, 'stats_value counts copies with no price yet');
+select is((select other_currency from public.stats_value('10000000-0000-0000-0000-00000000000a', 'USD')),
+  1::bigint, 'a price in another currency is counted as such, not summed');
+select is((select count(*)::int from public.stats_top_copies('10000000-0000-0000-0000-00000000000a', 'CAD')),
+  1, 'stats_top_copies lists the priced copy');
+reset role;
+
+select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
+select is((select copies from public.stats_value('10000000-0000-0000-0000-00000000000a', 'CAD')),
+  0::bigint, 'a non-member gets nothing from stats_value for another library');
+select is((select count(*)::int from public.stats_top_copies('10000000-0000-0000-0000-00000000000a', 'CAD')),
+  0, 'a non-member gets nothing from stats_top_copies');
+select is((select count(*)::int from public.stats_added('10000000-0000-0000-0000-00000000000a')),
+  0, 'a non-member gets nothing from stats_added');
+select throws_ok($$select * from public.price_refresh_candidates(now(), 10)$$,
+  '42501', null, 'signed-in users cannot call the cron candidate query');
+reset role;
+
+-- The cron candidate query: physical, with an ISBN, in a library with a price region, never or long ago checked
+select pg_temp.act_as_admin();
+select is((select count(*)::int from public.price_refresh_candidates(now() - interval '7 days', 100000)
+           where copy_id in ('71000000-0000-0000-0000-000000000001', '71000000-0000-0000-0000-000000000002', '71000000-0000-0000-0000-000000000003')),
+  0, 'copies in a library with no price region are not refreshed');
+update public.libraries set price_region = 'EBAY_CA' where id = '10000000-0000-0000-0000-00000000000a';
+select is((select array_agg(copy_id) from public.price_refresh_candidates(now() - interval '7 days', 100000)
+           where copy_id in ('71000000-0000-0000-0000-000000000001', '71000000-0000-0000-0000-000000000002', '71000000-0000-0000-0000-000000000003')),
+  array['71000000-0000-0000-0000-000000000001'::uuid], 'only the physical copy with an ISBN is a candidate');
+update public.copies set price_checked_at = now() - interval '2 days' where id = '71000000-0000-0000-0000-000000000001';
+select is((select count(*)::int from public.price_refresh_candidates(now() - interval '7 days', 100000)
+           where copy_id = '71000000-0000-0000-0000-000000000001'),
+  0, 'a copy checked within 7 days is not a candidate');
+update public.copies set price_checked_at = now() - interval '9 days' where id = '71000000-0000-0000-0000-000000000001';
+select is((select count(*)::int from public.price_refresh_candidates(now() - interval '7 days', 100000)
+           where copy_id = '71000000-0000-0000-0000-000000000001'),
+  1, 'a copy checked more than 7 days ago is a candidate again');
 
 select finish();
 rollback;

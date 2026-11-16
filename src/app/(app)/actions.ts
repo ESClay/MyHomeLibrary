@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { CURRENT_LIBRARY_COOKIE, requireUser } from "@/lib/library";
 import { createClient } from "@/lib/supabase/server";
 
-export type ActionState = { error?: string };
+export type ActionState = { error?: string; saved?: boolean };
 
 async function setCurrentLibrary(id: string) {
   (await cookies()).set(CURRENT_LIBRARY_COOKIE, id, {
