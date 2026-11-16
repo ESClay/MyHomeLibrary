@@ -15,12 +15,20 @@ function active(): MetadataProvider[] {
   return PROVIDERS.filter((p) => p.isConfigured());
 }
 
+let lastRateLimitedAt = 0;
+
+/** True when any provider answered "too many requests" at or after `since` (epoch ms). Used by bulk imports to back off. */
+export function rateLimitedSince(since: number): boolean {
+  return lastRateLimitedAt >= since;
+}
+
 /** Runs a provider call; a failure is logged and becomes an empty result, never an error. */
 async function safely<T>(provider: MetadataProvider, what: string, run: () => Promise<T>, fallback: T): Promise<T> {
   try {
     return await run();
   } catch (e) {
     const reason = e instanceof Error ? e.message : "unknown error";
+    if (/\b429\b/.test(reason)) lastRateLimitedAt = Date.now();
     console.warn(`[metadata] ${provider.name} ${what} failed: ${reason}`);
     return fallback;
   }

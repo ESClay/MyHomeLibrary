@@ -7,7 +7,7 @@
 -- dave (owns Lib B; accepts an invite into Lib A mid-file),
 -- eve (member of nothing, ever).
 begin;
-select plan(57);
+select plan(69);
 
 -- ---------------------------------------------------------------- fixtures
 insert into auth.users (id, aud, role, email) values
@@ -281,6 +281,61 @@ reset role;
 select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
 select is((select count(*)::int from public.scan_jobs where photo_path = '10000000-0000-0000-0000-00000000000a/b0000000-0000-0000-0000-000000000002/photo.jpg'),
   0, 'scan jobs are private to the user who made them');
+reset role;
+
+-- ------------------------------------------------ Phase 3c: Calibre import
+-- books.calibre_uuid is unique per library (and only when set).
+select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
+select lives_ok(
+  $$insert into public.books (library_id, title, calibre_uuid) values
+    ('10000000-0000-0000-0000-00000000000a', 'Imported once', 'cal-uuid-fixture-1')$$,
+  'an editor can save a book with a calibre_uuid');
+select throws_ok(
+  $$insert into public.books (library_id, title, calibre_uuid) values
+    ('10000000-0000-0000-0000-00000000000a', 'Imported twice', 'cal-uuid-fixture-1')$$,
+  '23505', null, 'the same calibre_uuid cannot be saved twice in one library');
+select lives_ok(
+  $$insert into public.books (library_id, title) values
+    ('10000000-0000-0000-0000-00000000000a', 'No uuid one'), ('10000000-0000-0000-0000-00000000000a', 'No uuid two')$$,
+  'books without a calibre_uuid never collide');
+reset role;
+select lives_ok(
+  $$insert into public.books (library_id, title, calibre_uuid) values
+    ('10000000-0000-0000-0000-00000000000b', 'Same uuid, other library', 'cal-uuid-fixture-1')$$,
+  'the same calibre_uuid is allowed in a different library');
+
+-- import_jobs: owner-only, created only where the user can edit.
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select lives_ok(
+  $$insert into public.import_jobs (id, library_id, total, rows) values
+    ('f0000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000a', 0, '[]')$$,
+  'an editor can create their own import job');
+select throws_ok(
+  $$insert into public.import_jobs (user_id, library_id) values
+    ('a0000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000a')$$,
+  '42501', null, 'cannot create an import job for someone else');
+select is(public.import_append_rows('f0000000-0000-0000-0000-000000000001', '[{"n":1},{"n":2}]'::jsonb), 2,
+  'append adds rows to a pending job and returns the new total');
+select is(jsonb_array_length(public.import_rows_slice('f0000000-0000-0000-0000-000000000001', 1, 10)), 1,
+  'a slice returns the rows from the offset on');
+reset role;
+
+select pg_temp.act_as('c0000000-0000-0000-0000-000000000003');
+select throws_ok(
+  $$insert into public.import_jobs (library_id) values ('10000000-0000-0000-0000-00000000000a')$$,
+  '42501', null, 'a viewer cannot create an import job');
+reset role;
+
+select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
+select is((select count(*)::int from public.import_jobs where id = 'f0000000-0000-0000-0000-000000000001'),
+  0, 'import jobs are private to the user who made them');
+select is(public.import_append_rows('f0000000-0000-0000-0000-000000000001', '[{"n":3}]'::jsonb), null::int,
+  'another member cannot append rows to someone else''s job');
+reset role;
+
+select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
+select is((select count(*)::int from public.import_jobs where id = 'f0000000-0000-0000-0000-000000000001'),
+  0, 'a non-member cannot see an import job');
 reset role;
 
 select finish();
