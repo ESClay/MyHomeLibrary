@@ -4,6 +4,8 @@ import { useState, type Dispatch } from "react";
 import Link from "next/link";
 import { BookCheck, ChevronDown, CircleAlert } from "lucide-react";
 import { addCopy, createBook } from "@/app/(app)/books/actions";
+import { addBooksToShelves } from "@/app/(app)/shelves/actions";
+import { ShelfPicker } from "@/components/shelf-picker";
 import { copyDraftToInput, draftFromMetadata, draftToFields, emptyBookDraft, emptyCopyDraft, Field } from "@/components/book-forms";
 import { Cover } from "@/components/cover";
 import { Button } from "@/components/ui/button";
@@ -35,12 +37,13 @@ const ACTION_LABEL: Record<ItemAction, string> = {
   skip: "Skip",
 };
 
-async function saveOne(libraryId: string, item: TrayItem, r: Resolved): Promise<string | null> {
+async function saveOne(libraryId: string, item: TrayItem, r: Resolved, shelfIds: string[]): Promise<string | null> {
   const copy = { ...emptyCopyDraft, format: r.format, condition: r.condition, editionIsbn: item.isbn };
 
   if (r.action === "copy") {
     if (!r.targetBookId) return "The matching book could not be found.";
     const res = await addCopy({ bookId: r.targetBookId, copy: copyDraftToInput(copy) });
+    if (res.ok && shelfIds.length) await addBooksToShelves({ shelfIds, bookIds: [r.targetBookId] }).catch(() => null);
     return res.ok ? null : res.error;
   }
 
@@ -67,6 +70,7 @@ async function saveOne(libraryId: string, item: TrayItem, r: Resolved): Promise<
     copy: r.ownership === "owned" ? copyDraftToInput(copy) : null,
     myStatus: r.ownership === "owned" ? null : "want",
     force: false,
+    shelfIds,
   });
   if (res.ok) return null;
   return res.duplicates?.length ? "Already in your library." : res.error;
@@ -239,6 +243,7 @@ export function ReviewSheet({
   onClose: () => void;
 }) {
   const [bulk, setBulk] = useState<BulkSettings>(DEFAULT_BULK);
+  const [shelfIds, setShelfIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -262,7 +267,7 @@ export function ReviewSheet({
       if (!item) continue;
       let error: string | null;
       try {
-        error = await saveOne(libraryId, item, r);
+        error = await saveOne(libraryId, item, r, shelfIds);
       } catch {
         error = "Could not save this one. Try again.";
       }
@@ -335,6 +340,7 @@ export function ReviewSheet({
                     </Field>
                   </div>
                 )}
+                <ShelfPicker libraryId={libraryId} value={shelfIds} onChange={setShelfIds} disabled={saving} />
                 <p className="text-sm text-muted-foreground">
                   Each book below can use its own settings. Books already in your library are skipped unless you choose to add another copy.
                 </p>

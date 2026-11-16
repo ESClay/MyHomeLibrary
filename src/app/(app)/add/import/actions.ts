@@ -25,6 +25,7 @@ import {
   type RowResult,
 } from "@/lib/calibre/plan";
 import { processRow } from "@/lib/calibre/process";
+import { attachBooksToShelves } from "@/lib/shelves/assign";
 import { requireUser } from "@/lib/library";
 import { lookupByIsbn, rateLimitedSince, search } from "@/lib/metadata";
 import { createClient } from "@/lib/supabase/server";
@@ -39,7 +40,7 @@ async function editorOf(libraryId: string) {
   const user = await requireUser();
   const role = await roleInLibrary(libraryId, user.id);
   if (!canEdit(role)) return { ok: false as const, error: role ? NOT_EDITOR : "You are not a member of that library." };
-  return { ok: true as const, user };
+  return { ok: true as const, user, role };
 }
 
 // ------------------------------------------------------------ the library
@@ -220,10 +221,21 @@ export async function processImportBatch(input: z.input<typeof batchSchema>): Pr
     take: () => pacer.take(),
     limited: () => rateLimitedSince(startedAt),
     state: { rateLimited: false },
+    touched: [] as string[],
   };
 
   const results: RowResult[] = [];
   for (const row of rows as JobRow[]) results.push(await processRow(ctx, row));
+
+  // The shelves chosen at review get this batch's books. Idempotent, so a retried batch cannot double up.
+  const shelfIds = mapping.success ? mapping.data.shelfIds : [];
+  if (shelfIds.length > 0 && ctx.touched.length > 0) {
+    try {
+      await attachBooksToShelves(supabase, { userId: user.id, role: who.role, libraryId: job.library_id, shelfIds, bookIds: ctx.touched });
+    } catch {
+      // Shelves are a convenience: the books are saved either way.
+    }
+  }
 
   const processed = from + rows.length;
   const done = processed >= job.total;

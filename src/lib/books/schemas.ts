@@ -101,6 +101,8 @@ export const createBookSchema = z.object({
   myStatus: z.enum(STATUSES).nullable().optional(),
   /** skip the duplicate check (the user chose "add as separate book") */
   force: z.boolean().optional(),
+  /** manual shelves to put the new book on (the "Put on shelves" picker) */
+  shelfIds: z.array(uuid).max(20).optional(),
 });
 export type CreateBookInput = z.input<typeof createBookSchema>;
 

@@ -17,6 +17,8 @@ export type BatchContext = {
   limited: () => boolean;
   /** Set once a rate limit is seen: the rest of the batch is saved without lookups. */
   state: { rateLimited: boolean };
+  /** Ids of the books this batch saved (or added a copy to), for the shelves chosen at review. */
+  touched: string[];
 };
 
 type Db = SupabaseClient;
@@ -127,6 +129,7 @@ async function addBook(ctx: BatchContext, row: JobRow): Promise<RowResult> {
     return { ...base, outcome: "failed", enriched: false, message: copyError.message };
   }
 
+  ctx.touched.push(created.id);
   const warning = await recordRead(db, ctx.userId, created.id, row, true);
   return warning ? { ...base, warning } : base;
 }
@@ -152,6 +155,7 @@ async function addEbookCopy(ctx: BatchContext, row: JobRow): Promise<RowResult> 
   // Owning a copy means the book is no longer just on the wishlist.
   if (book.ownership === "wishlist") await db.from("books").update({ ownership: "owned" }).eq("id", row.targetBookId);
 
+  ctx.touched.push(row.targetBookId);
   const warning = await recordRead(db, ctx.userId, row.targetBookId, row, false);
   return warning ? { ...base, warning } : base;
 }

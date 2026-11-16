@@ -4,6 +4,8 @@ import { useMemo, useReducer, useState, type Dispatch } from "react";
 import Link from "next/link";
 import { BookCheck, Check, ChevronDown, CircleAlert, ImageIcon, LoaderCircle, RotateCw, Search } from "lucide-react";
 import { addCopy, checkDuplicates, createBook } from "@/app/(app)/books/actions";
+import { addBooksToShelves } from "@/app/(app)/shelves/actions";
+import { ShelfPicker } from "@/components/shelf-picker";
 import { Segmented } from "@/app/(app)/add/scan/review-sheet";
 import { copyDraftToInput, draftFromMetadata, draftToFields, emptyBookDraft, emptyCopyDraft, Field } from "@/components/book-forms";
 import { Cover } from "@/components/cover";
@@ -86,6 +88,7 @@ async function saveOne(
   extra: ScanItem,
   r: Resolved,
   photoJobId: string | null,
+  shelfIds: string[],
 ): Promise<SaveResult> {
   const meta = item.meta;
   const copy = { ...emptyCopyDraft, format: r.format, condition: r.condition, editionIsbn: meta?.isbn13 ?? "" };
@@ -93,6 +96,7 @@ async function saveOne(
   if (r.action === "copy") {
     if (!r.targetBookId) return { error: "The matching book could not be found." };
     const res = await addCopy({ bookId: r.targetBookId, copy: copyDraftToInput(copy) });
+    if (res.ok && shelfIds.length) await addBooksToShelves({ shelfIds, bookIds: [r.targetBookId] }).catch(() => null);
     return { error: res.ok ? null : res.error };
   }
 
@@ -120,6 +124,7 @@ async function saveOne(
     copy: r.ownership === "owned" ? copyDraftToInput(copy) : null,
     myStatus: r.ownership === "owned" ? null : "want",
     force: false,
+    shelfIds,
   });
   if (!res.ok) return { error: res.duplicates?.length ? "Already in your library." : res.error };
   if (photoJobId) {
@@ -420,6 +425,7 @@ export function PhotoReview({
   const [tray, dispatch] = useReducer(trayReducer, items, (list) => list.map(toTrayItem));
   const [bulk, setBulk] = useState<BulkSettings>(DEFAULT_BULK);
   const [usePhoto, setUsePhoto] = useState(false);
+  const [shelfIds, setShelfIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -449,7 +455,7 @@ export function PhotoReview({
       if (!item || !extra) continue;
       let result: SaveResult;
       try {
-        result = await saveOne(libraryId, item, extra, r, offerPhotoCover && usePhoto ? jobId : null);
+        result = await saveOne(libraryId, item, extra, r, offerPhotoCover && usePhoto ? jobId : null, shelfIds);
       } catch {
         result = { error: "Could not save this one. Try again." };
       }
@@ -554,6 +560,7 @@ export function PhotoReview({
                 </Field>
               </div>
             )}
+            <ShelfPicker libraryId={libraryId} value={shelfIds} onChange={setShelfIds} disabled={saving} />
             <p className="text-sm text-muted-foreground">
               Each book can use its own settings. Books already in your library are skipped unless you tick them to add another copy.
             </p>

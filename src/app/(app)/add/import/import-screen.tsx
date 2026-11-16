@@ -28,6 +28,7 @@ export function ImportScreen({ libraryId, libraryName, resume }: { libraryId: st
   const [mapping, setMapping] = useState<ReadMapping>(EMPTY_MAPPING);
   const [overrides, setOverrides] = useState<Map<number, ImportAction>>(new Map());
   const [enrich, setEnrich] = useState(true);
+  const [shelfIds, setShelfIds] = useState<string[]>([]);
   const [index, setIndex] = useState<LibraryIndexBook[] | null>(null);
   const [indexError, setIndexError] = useState<string | null>(null);
   const [run, setRun] = useState<RunSource | null>(null);
@@ -60,7 +61,7 @@ export function ImportScreen({ libraryId, libraryName, resume }: { libraryId: st
   }
 
   function begin(rows: JobRow[], skippedInReview: number) {
-    const jobMapping: JobMapping = { ...mapping, enrich, expected: rows.length };
+    const jobMapping: JobMapping = { ...mapping, enrich, expected: rows.length, shelfIds };
     setRun({ kind: "fresh", libraryId, rows, skippedInReview, mapping: jobMapping });
     setStep("run");
   }
@@ -146,6 +147,9 @@ export function ImportScreen({ libraryId, libraryName, resume }: { libraryId: st
               setOverrides={setOverrides}
               enrich={enrich}
               setEnrich={setEnrich}
+              libraryId={libraryId}
+              shelfIds={shelfIds}
+              setShelfIds={setShelfIds}
               onBack={() => setStep("read")}
               onStart={begin}
               onRetryIndex={() => void fetchIndex()}

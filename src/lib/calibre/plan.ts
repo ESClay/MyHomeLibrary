@@ -42,6 +42,8 @@ export const jobMappingSchema = z.object({
   enrich: z.boolean(),
   /** How many rows the job should hold once the upload is complete. */
   expected: z.number().int().min(0),
+  /** Manual shelves every saved book is put on. */
+  shelfIds: z.array(z.string().uuid()).max(20).default([]),
 });
 export type JobMapping = z.infer<typeof jobMappingSchema>;
 

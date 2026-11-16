@@ -7,7 +7,7 @@
 -- dave (owns Lib B; accepts an invite into Lib A mid-file),
 -- eve (member of nothing, ever).
 begin;
-select plan(69);
+select plan(99);
 
 -- ---------------------------------------------------------------- fixtures
 insert into auth.users (id, aud, role, email) values
@@ -42,6 +42,15 @@ create function pg_temp.act_as(uid uuid) returns void language plpgsql as $$
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', uid, 'role', 'authenticated')::text, true);
   execute 'set local role authenticated';
+end;
+$$;
+
+-- Helper: back to the admin role AND no signed-in user. `reset role` alone leaves request.jwt.claims
+-- (set transaction-locally by act_as) in place, so auth.uid() would still return the last user.
+create function pg_temp.act_as_admin() returns void language plpgsql as $$
+begin
+  execute 'reset role';
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
@@ -336,6 +345,135 @@ reset role;
 select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
 select is((select count(*)::int from public.import_jobs where id = 'f0000000-0000-0000-0000-000000000001'),
   0, 'a non-member cannot see an import job');
+reset role;
+
+-- ------------------------------------------------------------------ shelves
+-- Fixture ids: s...01 legacy shelf (no created_by), 02 bob shared, 03 carol private, 04 bob private,
+-- 05 bob smart, 06 carol private for the viewer-can-create check.
+insert into public.books (id, library_id, title) values
+  ('20000000-0000-0000-0000-0000000000a1', '10000000-0000-0000-0000-00000000000a', 'Shelf book 1'),
+  ('20000000-0000-0000-0000-0000000000a2', '10000000-0000-0000-0000-00000000000a', 'Shelf book 2');
+
+-- Backfill: a shelf written without a creator belongs to the library owner.
+-- Admin insert with no signed-in user (as the service role would be), so clear any leftover claims.
+select pg_temp.act_as_admin();
+insert into public.shelves (id, library_id, name) values
+  ('50000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000a', 'Legacy shelf');
+select is(
+  (select created_by from public.shelves where id = '50000000-0000-0000-0000-000000000001'),
+  'a0000000-0000-0000-0000-000000000001'::uuid,
+  'a shelf with no creator is filled in with the library owner');
+select is(
+  (select color from public.shelves where id = '50000000-0000-0000-0000-000000000001'),
+  'spine-1', 'a shelf defaults to the first spine colour');
+
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select lives_ok(
+  $$insert into public.shelves (id, library_id, name, color) values
+    ('50000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-00000000000a', 'Bob shared', 'spine-2')$$,
+  'an editor can create a shared shelf');
+select lives_ok(
+  $$insert into public.shelves (id, library_id, name, visibility) values
+    ('50000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-00000000000a', 'Bob private', 'private')$$,
+  'an editor can create a private shelf');
+select lives_ok(
+  $$insert into public.shelves (id, library_id, name, kind, rules, sort) values
+    ('50000000-0000-0000-0000-000000000005', '10000000-0000-0000-0000-00000000000a', 'Bob smart', 'smart', '{"my":"read"}', 'title')$$,
+  'an editor can create a smart shelf');
+select lives_ok(
+  $$insert into public.shelf_books (shelf_id, book_id) values
+    ('50000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-0000000000a1'),
+    ('50000000-0000-0000-0000-000000000004', '20000000-0000-0000-0000-0000000000a1')$$,
+  'an editor can put a book on shared and own private shelves');
+select throws_ok(
+  $$insert into public.shelf_books (shelf_id, book_id) values
+    ('50000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-0000000000a1')$$,
+  '23514', null, 'a smart shelf cannot hold books');
+select throws_ok(
+  $$insert into public.shelf_books (shelf_id, book_id) values
+    ('50000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-00000000000b')$$,
+  '23514', null, 'a shelf cannot hold a book from another library');
+select throws_ok(
+  $$update public.shelves set kind = 'smart', rules = '{}' where id = '50000000-0000-0000-0000-000000000002'$$,
+  '23514', null, 'a shelf cannot change kind');
+select throws_ok(
+  $$insert into public.shelves (library_id, name, kind, rules, sort) values ('10000000-0000-0000-0000-00000000000a', 'Bad', 'smart', '{}', 'custom')$$,
+  '23514', null, 'a smart shelf cannot use custom order');
+select throws_ok(
+  $$insert into public.shelves (library_id, name, rules) values ('10000000-0000-0000-0000-00000000000a', 'Bad', '{}')$$,
+  '23514', null, 'a manual shelf cannot carry rules');
+select throws_ok(
+  $$insert into public.shelves (library_id, name, color) values ('10000000-0000-0000-0000-00000000000a', 'Bad', 'purple')$$,
+  '23514', null, 'a shelf colour must be a spine colour');
+select throws_ok(
+  $$insert into public.shelves (library_id, name, created_by) values
+    ('10000000-0000-0000-0000-00000000000a', 'Spoof', 'a0000000-0000-0000-0000-000000000001')$$,
+  '42501', null, 'a shelf cannot be created in someone else''s name');
+reset role;
+
+select pg_temp.act_as('c0000000-0000-0000-0000-000000000003');
+select lives_ok(
+  $$insert into public.shelves (id, library_id, name, visibility) values
+    ('50000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-00000000000a', 'Carol private', 'private')$$,
+  'a viewer can create a private shelf');
+select throws_ok(
+  $$insert into public.shelves (library_id, name) values ('10000000-0000-0000-0000-00000000000a', 'Carol shared')$$,
+  '42501', null, 'a viewer cannot create a shared shelf');
+select lives_ok(
+  $$insert into public.shelf_books (shelf_id, book_id) values
+    ('50000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-0000000000a2')$$,
+  'a viewer can put a book on their own private shelf');
+select throws_ok(
+  $$insert into public.shelf_books (shelf_id, book_id) values
+    ('50000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-0000000000a2')$$,
+  '42501', null, 'a viewer cannot put a book on a shared shelf');
+select is(
+  pg_temp.affected($$update public.shelves set name = 'Hacked' where id = '50000000-0000-0000-0000-000000000002'$$),
+  0, 'a viewer cannot rename a shared shelf');
+select is(
+  (select count(*)::int from public.shelves where id::text like '50000000-%'),
+  4, 'a viewer sees the shared shelves and their own private one, not an editor''s');
+select is(
+  (select count(*)::int from public.shelf_books where shelf_id = '50000000-0000-0000-0000-000000000004'),
+  0, 'a viewer cannot see the books on someone else''s private shelf');
+reset role;
+
+select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
+select is(
+  (select count(*)::int from public.shelves where id = '50000000-0000-0000-0000-000000000003'),
+  0, 'a private shelf is invisible to other members');
+select is(
+  (select count(*)::int from public.shelf_books where shelf_id = '50000000-0000-0000-0000-000000000003'),
+  0, 'the books on a private shelf are invisible to other members');
+select is(
+  pg_temp.affected($$update public.shelves set name = 'Hacked' where id = '50000000-0000-0000-0000-000000000003'$$),
+  0, 'an editor cannot edit someone else''s private shelf');
+select is(
+  pg_temp.affected($$delete from public.shelves where id = '50000000-0000-0000-0000-000000000003'$$),
+  0, 'an editor cannot delete someone else''s private shelf');
+select is(
+  pg_temp.affected($$delete from public.shelf_books where shelf_id = '50000000-0000-0000-0000-000000000003'$$),
+  0, 'an editor cannot remove books from someone else''s private shelf');
+reset role;
+
+select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
+select is(
+  (select count(*)::int from public.shelves where id::text like '50000000-%'),
+  3, 'the owner sees shared and smart shelves but no one''s private shelf');
+select is(
+  pg_temp.affected($$delete from public.shelves where id = '50000000-0000-0000-0000-000000000004'$$),
+  0, 'the owner cannot delete a member''s private shelf');
+select is(
+  pg_temp.affected($$update public.shelves set name = 'Renamed' where id = '50000000-0000-0000-0000-000000000002'$$),
+  1, 'the owner can edit a shared shelf made by an editor');
+reset role;
+
+select pg_temp.act_as('e0000000-0000-0000-0000-000000000005');
+select is((select count(*)::int from public.shelves where id::text like '50000000-%'), 0,
+  'a non-member sees no shelves');
+select throws_ok(
+  $$insert into public.shelves (library_id, name, visibility) values ('10000000-0000-0000-0000-00000000000a', 'Eve', 'private')$$,
+  '42501', null, 'a non-member cannot create a private shelf');
 reset role;
 
 select finish();

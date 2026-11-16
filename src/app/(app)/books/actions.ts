@@ -7,6 +7,7 @@ import { findDuplicates, type DuplicateMatch } from "@/lib/duplicates";
 import { refreshFor } from "@/lib/metadata";
 import { authorizeBook, canEdit, fail, firstIssue, roleInLibrary, type ActionResult } from "@/lib/books/access";
 import { loadDuplicateCandidates } from "@/lib/books/data";
+import { attachBooksToShelves } from "@/lib/shelves/assign";
 import {
   addReadSchema,
   copyActionSchema,
@@ -71,7 +72,7 @@ export async function checkDuplicates(
 export async function createBook(input: CreateBookInput): Promise<CreateBookResult> {
   const parsed = createBookSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: firstIssue(parsed.error) };
-  const { libraryId, book, provider, copy, myStatus, force } = parsed.data;
+  const { libraryId, book, provider, copy, myStatus, force, shelfIds } = parsed.data;
 
   const user = await requireUser();
   const role = await roleInLibrary(libraryId, user.id);
@@ -126,6 +127,15 @@ export async function createBook(input: CreateBookInput): Promise<CreateBookResu
   const status = book.ownership === "wishlist" ? (myStatus ?? "want") : (myStatus ?? null);
   if (status) {
     await supabase.from("user_books").upsert({ user_id: user.id, book_id: created.id, status }, { onConflict: "user_id,book_id" });
+  }
+
+  if (shelfIds?.length && role) {
+    try {
+      await attachBooksToShelves(supabase, { userId: user.id, role, libraryId, shelfIds, bookIds: [created.id] });
+      revalidatePath("/shelves");
+    } catch {
+      // The book is saved; a shelf problem should not make the save look failed.
+    }
   }
 
   revalidatePath("/library");

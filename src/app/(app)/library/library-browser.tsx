@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, LayoutGrid, List, Rows3, Search, SlidersHorizontal, X } from "lucide-react";
-import { Cover } from "@/components/cover";
-import { Stars } from "@/components/stars";
+import { BookmarkPlus, CheckSquare, LayoutGrid, List, Rows3, Search, SlidersHorizontal, X } from "lucide-react";
+import { BookGrid, BookList, type ViewMode } from "@/components/book-grid";
+import { AssignSheet } from "@/components/assign-sheet";
+import { NEW_SHELF, ShelfFormSheet } from "@/components/shelf-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,9 +32,12 @@ import {
   type LibraryParams,
   type Sort,
 } from "@/lib/books/library-query";
+import type { LibraryRole } from "@/lib/library";
+import { rulesFromParams } from "@/lib/shelves/rules";
+import { updateShelf } from "@/app/(app)/shelves/actions";
 import { cn } from "@/lib/utils";
 
-export type ViewMode = "grid" | "list";
+export type { ViewMode };
 export const VIEW_COOKIE = "library_view";
 
 function saveView(view: ViewMode) {
@@ -52,6 +56,9 @@ export function LibraryBrowser({
   seriesNames,
   hasPartners,
   initialView,
+  libraryId,
+  role,
+  editShelf,
 }: {
   items: LibraryItem[];
   total: number;
@@ -60,6 +67,10 @@ export function LibraryBrowser({
   seriesNames: string[];
   hasPartners: boolean;
   initialView: ViewMode;
+  libraryId: string;
+  role: LibraryRole;
+  /** Set when the filters are being edited as a smart shelf's rules. */
+  editShelf: { id: string; name: string } | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -68,10 +79,46 @@ export function LibraryBrowser({
   const [q, setQ] = useState(params.q);
   const lastPushed = useRef(params.q);
   const filters = activeFilterCount(params);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [assign, setAssign] = useState<"add" | "remove" | null>(null);
+  const [smartOpen, setSmartOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [ruleError, setRuleError] = useState<string | null>(null);
+  const hasRules = filters > 0 || !!params.q;
+
+  // Keeps the "editing a shelf's rules" mode across every filter change.
+  const hrefFor = (o: Partial<LibraryParams> = {}) => {
+    const h = libraryHref(params, o);
+    return editShelf ? `${h}${h.includes("?") ? "&" : "?"}editShelf=${editShelf.id}` : h;
+  };
 
   function go(overrides: Partial<LibraryParams>) {
     // Changing a filter or the sort starts again from the first page.
-    startTransition(() => router.replace(libraryHref(params, { limit: PAGE_SIZE, ...overrides }), { scroll: false }));
+    startTransition(() => router.replace(hrefFor({ limit: PAGE_SIZE, ...overrides }), { scroll: false }));
+  }
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const selection = { on: selecting, selected, toggle };
+  const stopSelecting = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
+
+  function saveRules() {
+    if (!editShelf) return;
+    setRuleError(null);
+    startTransition(async () => {
+      const res = await updateShelf({ shelfId: editShelf.id, rules: rulesFromParams(params) });
+      if (!res.ok) return setRuleError(res.error);
+      router.push(`/shelves/${editShelf.id}`);
+    });
   }
 
   // Search as you type, after a short pause.
@@ -79,12 +126,13 @@ export function LibraryBrowser({
     if (q === lastPushed.current) return;
     const t = setTimeout(() => {
       lastPushed.current = q;
-      startTransition(() => router.replace(libraryHref(params, { q: q.trim(), limit: PAGE_SIZE }), { scroll: false }));
+      startTransition(() => router.replace(hrefFor({ q: q.trim(), limit: PAGE_SIZE }), { scroll: false }));
     }, 350);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, params, router]);
 
-  const clearAll = libraryHref(params, {
+  const clearAll = hrefFor({
     my: null,
     partner: null,
     format: null,
@@ -97,6 +145,27 @@ export function LibraryBrowser({
 
   return (
     <div className="flex flex-col gap-5">
+      {editShelf && (
+        <section aria-label="Editing smart shelf rules" className="panel flex flex-col gap-3 border-gilt p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[0.9375rem]">
+            <span className="eyebrow block text-gilt">Editing rules</span>
+            Set the filters below, then save them to <span className="font-semibold">{editShelf.name}</span>.
+          </p>
+          <div className="flex gap-2">
+            <Button asChild variant="outline">
+              <Link href={`/shelves/${editShelf.id}`}>Cancel</Link>
+            </Button>
+            <Button type="button" disabled={pending || !hasRules} onClick={saveRules}>
+              Save rules
+            </Button>
+          </div>
+          {ruleError && (
+            <p role="alert" className="text-sm text-destructive sm:basis-full">
+              {ruleError}
+            </p>
+          )}
+        </section>
+      )}
       <div className="flex gap-2">
         <form role="search" className="relative flex-1" onSubmit={(e) => e.preventDefault()}>
           <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -220,6 +289,17 @@ export function LibraryBrowser({
         >
           <span aria-hidden className="text-lg leading-none">{params.dir === "asc" ? "↑" : "↓"}</span>
         </Button>
+        {!editShelf && hasRules && (
+          <Button type="button" variant="outline" onClick={() => setSmartOpen(true)}>
+            <BookmarkPlus aria-hidden /> <span className="hidden sm:inline">Save as smart shelf</span>
+            <span className="sr-only sm:hidden">Save as smart shelf</span>
+          </Button>
+        )}
+        {!editShelf && (
+          <Button type="button" variant={selecting ? "secondary" : "outline"} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))}>
+            <CheckSquare aria-hidden /> {selecting ? "Done" : "Select"}
+          </Button>
+        )}
         <div role="group" aria-label="View" className="flex rounded-lg border border-input bg-card p-0.5">
           {(
             [
@@ -259,67 +339,76 @@ export function LibraryBrowser({
           </Button>
         </div>
       ) : view === "grid" ? (
-        <ul className={cn("grid grid-cols-3 gap-x-3 gap-y-6 transition-opacity sm:grid-cols-4 sm:gap-x-5 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7", pending && "opacity-60")}>
-          {items.map((b, i) => (
-            <li key={b.id}>
-              <Link href={`/books/${b.id}`} className="group flex flex-col gap-2 rounded-md outline-offset-4">
-                <div className="relative">
-                  <Cover url={b.coverUrl} title={b.title} author={b.authors[0]} priority={i < 6} />
-                  {b.ownership === "wishlist" && (
-                    <span className="absolute top-1.5 left-1.5 rounded-[3px] bg-gilt px-1.5 py-0.5 text-[0.625rem] font-semibold tracking-wider text-background uppercase">
-                      Wishlist
-                    </span>
-                  )}
-                  {b.mine?.status === "read" && (
-                    <span className="absolute right-1.5 bottom-1.5 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground" title="Read">
-                      <Check className="size-3" aria-label="Read" />
-                    </span>
-                  )}
-                </div>
-                <div className="flex min-w-0 flex-col gap-0.5">
-                  <span className="line-clamp-2 text-sm leading-snug font-medium group-hover:underline group-hover:decoration-gilt group-hover:underline-offset-2">{b.title}</span>
-                  <span className="truncate text-xs text-muted-foreground">{b.authors[0] ?? "Unknown author"}</span>
-                  {b.mine?.rating != null && <Stars value={b.mine.rating} size={12} />}
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
+        <BookGrid items={items} pending={pending} selection={selection} />
       ) : (
-        <ul className={cn("panel divide-y divide-border overflow-hidden transition-opacity", pending && "opacity-60")}>
-          {items.map((b) => (
-            <li key={b.id}>
-              <Link href={`/books/${b.id}`} className="flex min-h-[4.5rem] items-center gap-3 px-3 py-2 transition-colors duration-[var(--dur-fast)] hover:bg-accent/60">
-                <Cover url={b.coverUrl} title={b.title} author={b.authors[0]} className="w-10 shrink-0" />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-[0.9375rem] font-medium">{b.title}</span>
-                  <span className="truncate text-sm text-muted-foreground">
-                    {b.authors[0] ?? "Unknown author"}
-                    {b.seriesName ? ` · ${b.seriesName}${b.seriesPosition !== null ? ` #${b.seriesPosition}` : ""}` : ""}
-                  </span>
-                </span>
-                <span className="flex shrink-0 flex-col items-end gap-1">
-                  {b.mine?.rating != null ? <Stars value={b.mine.rating} size={12} /> : null}
-                  {b.ownership === "wishlist" ? (
-                    <Badge variant="secondary">Wishlist</Badge>
-                  ) : b.mine ? (
-                    <span className="text-xs text-muted-foreground">{STATUS_LABEL[b.mine.status]}</span>
-                  ) : null}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+        <BookList items={items} pending={pending} selection={selection} />
       )}
 
       {total > items.length && (
         <div className="flex justify-center pt-2">
           <Button asChild variant="outline" size="lg">
-            <Link href={libraryHref(params, { limit: params.limit + PAGE_SIZE })} scroll={false}>
+            <Link href={hrefFor({ limit: params.limit + PAGE_SIZE })} scroll={false}>
               Show {Math.min(PAGE_SIZE, total - items.length)} more
             </Link>
           </Button>
         </div>
+      )}
+
+      {notice && (
+        <p role="status" className="panel px-4 py-3 text-sm">
+          {notice}
+        </p>
+      )}
+
+      {selecting && (
+        <div className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 flex flex-col gap-2 rounded-[14px] border border-border bg-card p-3 shadow-[var(--shadow-card)] md:bottom-4">
+          <div className="flex items-center justify-between gap-3">
+            <p role="status" aria-live="polite" className="text-sm font-medium">
+              {selected.size === 0 ? "Tap books to select them" : `${selected.size} selected`}
+            </p>
+            <div className="flex gap-1">
+              <Button type="button" variant="ghost" size="sm" onClick={() => setSelected(new Set(items.map((i) => i.id)))}>
+                Select shown
+              </Button>
+              <Button type="button" variant="ghost" size="sm" disabled={selected.size === 0} onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" disabled={selected.size === 0} onClick={() => setAssign("add")}>
+              Add to shelf
+            </Button>
+            <Button type="button" variant="outline" disabled={selected.size === 0} onClick={() => setAssign("remove")}>
+              Remove from shelf
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {assign && (
+        <AssignSheet
+          mode={assign}
+          libraryId={libraryId}
+          bookIds={[...selected]}
+          onClose={() => setAssign(null)}
+          onDone={(m) => {
+            setNotice(m);
+            stopSelecting();
+          }}
+        />
+      )}
+      {smartOpen && (
+        <ShelfFormSheet
+          libraryId={libraryId}
+          initial={NEW_SHELF}
+          rules={rulesFromParams(params)}
+          canShare={role !== "viewer"}
+          onClose={(id) => {
+            setSmartOpen(false);
+            if (id) router.push(`/shelves/${id}`);
+          }}
+        />
       )}
     </div>
   );

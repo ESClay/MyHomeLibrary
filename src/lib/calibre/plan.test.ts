@@ -148,8 +148,12 @@ describe("summary", () => {
 
 describe("job mapping schema", () => {
   it("round-trips the importer's choices", () => {
-    const m = { statusColumn: "#read", dateColumn: null, valueMap: { true: "read", "": "ignore" }, enrich: true, expected: 12 };
+    const m = { statusColumn: "#read", dateColumn: null, valueMap: { true: "read", "": "ignore" }, enrich: true, expected: 12, shelfIds: [] };
     expect(jobMappingSchema.parse(m)).toEqual(m);
+    // Jobs saved before shelves existed still read, with no shelves.
+    const { shelfIds: _omit, ...old } = m;
+    void _omit;
+    expect(jobMappingSchema.parse(old).shelfIds).toEqual([]);
     expect(jobMappingSchema.safeParse({ ...m, valueMap: { x: "finished" } }).success).toBe(false);
   });
 });

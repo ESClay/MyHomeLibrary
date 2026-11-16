@@ -11,7 +11,10 @@ import { OWNERSHIP_LABEL, RATING_SOURCE_LABEL, STATUS_LABEL } from "@/lib/books/
 import { loadBookDetail } from "@/lib/books/data";
 import { timesRead } from "@/lib/format";
 import { getLibraryContext } from "@/lib/library";
+import { loadShelvesForBook } from "@/lib/shelves/data";
+import { canChangeShelfBooks } from "@/lib/shelves/permissions";
 import { BookActions, DeleteBook } from "./book-actions";
+import { BookShelves } from "./book-shelves";
 import { CopiesSection } from "./copies-section";
 import { Description } from "./description";
 import { MyShelf, OtherRating } from "./my-shelf";
@@ -30,7 +33,7 @@ export default async function BookPage({ params }: Props) {
   if (!UUID.test(id)) notFound();
 
   const { user } = await getLibraryContext();
-  const detail = await loadBookDetail(id, user.id);
+  const [detail, bookShelves] = await Promise.all([loadBookDetail(id, user.id), loadShelvesForBook(id)]);
   if (!detail) notFound();
 
   const { book, copies, me, others, role } = detail;
@@ -91,6 +94,23 @@ export default async function BookPage({ params }: Props) {
           {editor && <BookActions book={book} />}
         </div>
       </header>
+
+      <Section title="On shelves" eyebrow="Rooms and rows">
+        <BookShelves
+          bookId={book.id}
+          libraryId={book.library_id}
+          shelves={bookShelves
+            .filter((s) => s.kind === "manual")
+            .map((s) => ({
+              id: s.id,
+              name: s.name,
+              color: s.color,
+              icon: s.icon,
+              private: s.visibility === "private",
+              removable: canChangeShelfBooks(role, user.id, s),
+            }))}
+        />
+      </Section>
 
       <Section title="Your shelf" eyebrow="Just yours to edit">
         <MyShelf bookId={book.id} status={me.status} rating={me.rating} notes={me.notes} reads={me.reads} />

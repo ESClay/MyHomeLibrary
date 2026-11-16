@@ -18,6 +18,7 @@ import {
 import { buildJobRows, estimateSeconds, formatDuration, type JobRow } from "@/lib/calibre/plan";
 import { applyMapping } from "@/lib/calibre/read-map";
 import type { CalibreRow, ImportAction, ReadMapping, RowStatus } from "@/lib/calibre/types";
+import { ShelfPicker } from "@/components/shelf-picker";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
@@ -139,6 +140,9 @@ export function ReviewStep({
   setOverrides,
   enrich,
   setEnrich,
+  libraryId,
+  shelfIds,
+  setShelfIds,
   onBack,
   onStart,
   onRetryIndex,
@@ -152,6 +156,9 @@ export function ReviewStep({
   setOverrides: (next: Map<number, ImportAction>) => void;
   enrich: boolean;
   setEnrich: (v: boolean) => void;
+  libraryId: string;
+  shelfIds: string[];
+  setShelfIds: (ids: string[]) => void;
   onBack: () => void;
   onStart: (rows: JobRow[], skippedInReview: number) => void;
   onRetryIndex: () => void;
@@ -328,6 +335,10 @@ export function ReviewStep({
           </Button>
         </nav>
       )}
+
+      <section className="panel p-4">
+        <ShelfPicker libraryId={libraryId} value={shelfIds} onChange={setShelfIds} />
+      </section>
 
       <div className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 flex flex-col gap-3 rounded-[14px] border border-border bg-card p-3 shadow-[var(--shadow-card)] md:bottom-4">
         <label className="flex min-h-11 cursor-pointer items-start gap-3 text-sm">
