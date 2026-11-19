@@ -25,9 +25,9 @@ export default async function SettingsPage() {
 
   const isOwner = current.role === "owner";
   const supabase = await createClient();
-  const admin = await isAppAdmin(supabase, user.id);
 
-  const [{ data: members }, { data: invites }] = await Promise.all([
+  const [admin, { data: members }, { data: invites }] = await Promise.all([
+    isAppAdmin(supabase, user.id),
     supabase
       .from("library_members")
       .select("user_id, role, profiles(display_name, email)")

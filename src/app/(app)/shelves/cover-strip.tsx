@@ -19,7 +19,7 @@ export function CoverStrip({ covers, empty, className }: { covers: CoverLite[]; 
                 className="relative block rounded-[3px] outline-offset-4"
                 aria-label={c.loan ? `${c.title}, ${c.loan.overdue ? "overdue" : c.loan.direction === "out" ? "on loan" : "borrowed"}` : c.title}
               >
-                <Cover url={c.coverUrl} title={c.title} author={c.author ?? undefined} priority={i < 3} />
+                <Cover url={c.coverUrl} title={c.title} author={c.author ?? undefined} priority={i < 3} sizes="(min-width: 640px) 112px, 88px" />
                 {c.loan && <CoverLoanTag loan={c.loan} />}
               </Link>
             </li>

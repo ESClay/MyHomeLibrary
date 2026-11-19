@@ -53,7 +53,7 @@ function GapRow({ gap, entry, libraryId, canEdit, onMessage }: { gap: SeriesGap;
   return (
     <li className="flex gap-4 py-4">
       <div className="w-14 shrink-0 md:w-16">
-        <Cover url={entry.coverUrl} title={entry.title} author={entry.authors[0]} />
+        <Cover url={entry.coverUrl} title={entry.title} author={entry.authors[0]} sizes="(min-width: 768px) 64px, 56px" />
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">

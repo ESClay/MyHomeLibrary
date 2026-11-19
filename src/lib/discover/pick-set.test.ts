@@ -5,7 +5,7 @@ import type { RawPick } from "@/lib/ai/recommend-schema";
 import { emptyMetadata } from "@/lib/metadata/util";
 import type { BookMetadata } from "@/lib/metadata/types";
 import { buildLibraryIndex, inLibrary, workKey } from "./match";
-import { buildPickSet, resolvePick, type PickSetDeps } from "./pick-set";
+import { buildPickSet, categoryShortfall, resolvePick, type PickSetDeps } from "./pick-set";
 
 const raw = (title: string, author = "Some Author", over: Partial<RawPick> = {}): RawPick => ({
   title,
@@ -134,5 +134,46 @@ describe("buildPickSet", () => {
     const d = deps({ rounds: [result([raw("Title A")])], search: async () => [long] });
     const set = await buildPickSet({ scope: "personal", target: 1, deps: d });
     expect(set.items[0].book.description!.length).toBeLessThanOrEqual(600);
+  });
+});
+
+describe("buildPickSet with groups", () => {
+  const known = ["A", "B", "C", "D", "E", "F"].map((t) => meta(`Title ${t}`, "Some Author"));
+  const cat = (title: string, category: "shelves" | "ratings" | "authors") => raw(title, "Some Author", { category });
+
+  it("keeps each group to its own target and stores the group", async () => {
+    const d = deps({
+      rounds: [result([cat("Title A", "shelves"), cat("Title B", "shelves"), cat("Title C", "shelves"), cat("Title D", "ratings")])],
+      search: catalogue(known),
+    });
+    const set = await buildPickSet({ scope: "personal", target: 3, categoryTargets: { shelves: 2, ratings: 1 }, deps: d });
+    expect(set.calls).toBe(1);
+    expect(set.items.map((i) => `${i.title}:${i.category}`)).toEqual(["Title A:shelves", "Title B:shelves", "Title D:ratings"]);
+  });
+
+  it("ignores picks in a group that was not asked for", async () => {
+    const d = deps({ rounds: [result([cat("Title A", "ratings"), cat("Title B", "shelves")]), result([])], search: catalogue(known) });
+    const set = await buildPickSet({ scope: "personal", target: 1, categoryTargets: { shelves: 1 }, deps: d });
+    expect(set.items.map((i) => i.title)).toEqual(["Title B"]);
+  });
+
+  it("tops up only the groups that are still short, with the shortfall plus a margin", async () => {
+    const d = deps({
+      rounds: [result([cat("Title A", "shelves"), cat("Title B", "shelves"), cat("Nope", "authors")]), result([cat("Title C", "authors"), cat("Title D", "authors")])],
+      search: catalogue(known),
+    });
+    const library = [{ title: "L1", authors: ["Ann"] }, { title: "L2", authors: ["Ann"] }];
+    d.prompt = (topUp) => buildPersonalPrompt({ person: { id: "a", name: "Alice" }, rows: [], library, feedback: [], topUp });
+    const set = await buildPickSet({ scope: "personal", target: 4, categoryTargets: { shelves: 2, authors: 2 }, deps: d });
+    expect(set.calls).toBe(2);
+    expect(set.items.map((i) => `${i.title}:${i.category}`)).toEqual(["Title A:shelves", "Title B:shelves", "Title C:authors", "Title D:authors"]);
+    const second = d.request.mock.calls[1][0] as { user: string; categories: string[] };
+    expect(second.categories).toEqual(["authors"]);
+    expect(second.user).toContain("Give 5 different books instead (5 in authors)"); // 2 short + margin 3
+    expect(second.user).not.toContain("- shelves:");
+  });
+
+  it("computes what each group still lacks", () => {
+    expect(categoryShortfall({ shelves: 5, ratings: 5, authors: 5 }, { shelves: 5, ratings: 2 })).toEqual({ ratings: 3, authors: 5 });
   });
 });

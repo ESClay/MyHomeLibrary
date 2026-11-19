@@ -54,7 +54,7 @@ export function BookGrid({ items, pending, selection, extra }: { items: LibraryI
         <li key={b.id}>
           <Tile book={b} selection={selection} className="group flex w-full flex-col gap-2 rounded-md outline-offset-4">
             <div className="relative">
-              <Cover url={b.coverUrl} title={b.title} author={b.authors[0]} priority={i < 6} />
+              <Cover url={b.coverUrl} title={b.title} author={b.authors[0]} priority={i < 6} sizes="(min-width: 1024px) 160px, (min-width: 768px) 17vw, (min-width: 640px) 24vw, 31vw" />
               {selection?.on && (
                 <span className="absolute top-1.5 right-1.5">
                   <SelectMark checked={selection.selected.has(b.id)} />

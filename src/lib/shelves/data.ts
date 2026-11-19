@@ -1,15 +1,17 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { loadLibraryItems } from "@/lib/books/data";
+import { countLibraryBooks, loadLibraryItemsByIds, loadLibraryPageIds, loadLibraryPageItems } from "@/lib/books/data";
+import { PAGE_SIZE, type LibraryItem } from "@/lib/books/library-query";
 import { createClient } from "@/lib/supabase/server";
-import { buildReadingGroups, buildShelfRows, shelfBooks, sortShelves } from "./content";
+import { buildReadingGroups, idsByPosition, readingCoverIds, sortShelves, toCover, type ReadingRow } from "./content";
 import type { ShelfColor, ShelfIconKey, ShelfKind, ShelfSort, ShelfVisibility } from "./constants";
-import { SHELF_COLORS, SHELF_ICON_KEYS } from "./constants";
-import { readRules } from "./rules";
+import { ROW_COVERS, SHELF_COLORS, SHELF_ICON_KEYS } from "./constants";
+import { paramsFromRules, readRules } from "./rules";
 import type { ReadingGroup, Shelf, ShelfBookRef, ShelfRowData } from "./types";
-import type { LibraryItem } from "@/lib/books/library-query";
 
 const PAGE = 1000;
+/** The most rows one library_page call returns. */
+const LIBRARY_PAGE_MAX = 1000;
 const COLUMNS = "id, library_id, name, color, icon, visibility, kind, rules, sort, sort_order, created_by, created_at";
 
 type Row = Record<string, unknown>;
@@ -87,32 +89,101 @@ export type ShelvesOverview = {
   bookCount: number;
 };
 
+/** The library params a manual shelf's own sort stands for (it has no filters). Custom order has none: positions decide. */
+const manualParams = (sort: ShelfSort) => paramsFromRules({}, sort);
+
+/** One manual shelf's book ids in the shelf's sort, from its memberships. `limit` caps how many come back. */
+async function manualShelfIds(libraryId: string, shelf: Shelf, refs: ShelfBookRef[], limit: number): Promise<string[]> {
+  if (refs.length === 0) return [];
+  if (shelf.sort === "custom") return idsByPosition(refs).slice(0, limit);
+  const out: string[] = [];
+  // library_page returns at most 1000 rows a call; walk the shelf in pages.
+  for (let offset = 0; out.length < limit; offset += LIBRARY_PAGE_MAX) {
+    const { ids } = await loadLibraryPageIds(libraryId, manualParams(shelf.sort), { offset, limit: Math.min(LIBRARY_PAGE_MAX, limit - out.length), bookIds: refs.map((r) => r.bookId) });
+    out.push(...ids);
+    if (ids.length < LIBRARY_PAGE_MAX) break;
+  }
+  return out.slice(0, limit);
+}
+
+/** Every "reading" status in a library, with the book's age for ordering. Bounded by what people are reading now. */
+async function loadReadingRows(libraryId: string): Promise<ReadingRow[]> {
+  const db = await createClient();
+  const { data, error } = await db
+    .from("user_books")
+    .select("user_id, book_id, books!inner(created_at, library_id)")
+    .eq("status", "reading")
+    .eq("books.library_id", libraryId);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as unknown as { user_id: string; book_id: string; books: { created_at: string } | { created_at: string }[] }[]).map((r) => ({
+    userId: r.user_id,
+    bookId: r.book_id,
+    createdAt: (Array.isArray(r.books) ? r.books[0] : r.books).created_at,
+  }));
+}
+
 /**
- * Everything the shelves page needs in four bounded queries (shelves, memberships, books with their
- * statuses, member names), however many shelves there are. Rows are assembled in memory.
+ * Everything the shelves page needs without reading the library: the shelves, the manual memberships, who is reading
+ * what, then per shelf only the ids of the covers shown (smart shelves ask the database for a count and the first
+ * covers, manual shelves share one membership query), and one details query for just those covers.
  */
 export async function loadShelvesOverview(libraryId: string, userId: string): Promise<ShelvesOverview> {
-  const [shelves, items, names] = await Promise.all([loadShelves(libraryId), loadLibraryItems(libraryId, userId), loadMemberNames(libraryId)]);
+  const [shelves, names, readingRows, bookCount] = await Promise.all([loadShelves(libraryId), loadMemberNames(libraryId), loadReadingRows(libraryId), countLibraryBooks(libraryId)]);
   const refs = await loadShelfBookRefs(shelves.filter((s) => s.kind === "manual").map((s) => s.id));
+  const refsByShelf = new Map<string, ShelfBookRef[]>();
+  for (const r of refs) refsByShelf.set(r.shelfId, [...(refsByShelf.get(r.shelfId) ?? []), r]);
+
+  const parts = await Promise.all(
+    shelves.map(async (shelf) => {
+      if (shelf.kind === "smart") {
+        const { ids, total } = await loadLibraryPageIds(libraryId, paramsFromRules(shelf.rules ?? {}, shelf.sort), { limit: ROW_COVERS });
+        return { shelf, count: total, ids };
+      }
+      const mine = refsByShelf.get(shelf.id) ?? [];
+      return { shelf, count: mine.length, ids: await manualShelfIds(libraryId, shelf, mine, ROW_COVERS) };
+    }),
+  );
+
+  const covers = await loadLibraryItemsByIds([...new Set([...parts.flatMap((p) => p.ids), ...readingCoverIds(readingRows)])], userId);
+  const byId = new Map(covers.map((i) => [i.id, i]));
   return {
-    rows: buildShelfRows(shelves, items, refs),
-    reading: buildReadingGroups(items, names, userId),
-    bookCount: items.length,
+    rows: parts.map((p) => ({
+      shelf: p.shelf,
+      count: p.count,
+      covers: p.ids.map((id) => byId.get(id)).filter((i): i is LibraryItem => !!i).map(toCover),
+    })),
+    reading: buildReadingGroups(readingRows, byId, names, userId),
+    bookCount,
   };
 }
 
-export type ShelfDetailData = { shelf: Shelf; books: LibraryItem[]; positions: Map<string, number> };
+export type ShelfDetailData = {
+  shelf: Shelf;
+  books: LibraryItem[];
+  /** Every book on the shelf. A smart shelf may hold more than `books`; the rest load as the person scrolls. */
+  total: number;
+  hasMore: boolean;
+};
 
+/**
+ * A shelf's books. A smart shelf loads its first page (the library list's own paging, see library_page) and the rest
+ * through loadSmartShelfPage. A manual shelf loads all of its books, because arranging and selecting need the whole
+ * shelf; that is bounded by the shelf, not the library.
+ */
 export async function loadShelfDetail(shelf: Shelf, userId: string): Promise<ShelfDetailData> {
-  const [items, refs] = await Promise.all([
-    loadLibraryItems(shelf.libraryId, userId),
-    shelf.kind === "manual" ? loadShelfBookRefs([shelf.id]) : Promise.resolve([] as ShelfBookRef[]),
-  ]);
-  return {
-    shelf,
-    books: shelfBooks(shelf, items, refs),
-    positions: new Map(refs.map((r) => [r.bookId, r.position])),
-  };
+  if (shelf.kind === "smart") {
+    const { items, total } = await loadLibraryPageItems(shelf.libraryId, userId, paramsFromRules(shelf.rules ?? {}, shelf.sort), { limit: PAGE_SIZE });
+    return { shelf, books: items, total, hasMore: total > items.length };
+  }
+  const refs = await loadShelfBookRefs([shelf.id]);
+  const books = await loadLibraryItemsByIds(await manualShelfIds(shelf.libraryId, shelf, refs, Number.MAX_SAFE_INTEGER), userId);
+  return { shelf, books, total: books.length, hasMore: false };
+}
+
+/** Another page of a smart shelf's books. */
+export async function loadSmartShelfPage(shelf: Shelf, userId: string, offset: number): Promise<{ items: LibraryItem[]; total: number; hasMore: boolean }> {
+  const { items, total } = await loadLibraryPageItems(shelf.libraryId, userId, paramsFromRules(shelf.rules ?? {}, shelf.sort), { offset, limit: PAGE_SIZE });
+  return { items, total, hasMore: offset + PAGE_SIZE < total };
 }
 
 export type BookShelf = { id: string; name: string; color: ShelfColor; icon: string | null; visibility: ShelfVisibility; createdBy: string | null; kind: ShelfKind };

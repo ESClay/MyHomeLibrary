@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { applyLibraryQuery, parseLibraryParams, type LibraryItem } from "@/lib/books/library-query";
-import { evaluateSmart } from "./content";
 import { describeRules, hasRules, paramsFromRules, readRules, rulesFromParams, saveRulesSchema } from "./rules";
 
 function item(over: Partial<LibraryItem> & { id: string; title: string }): LibraryItem {
@@ -65,25 +64,25 @@ describe("round trip with the library query", () => {
     expect(paramsFromRules(rules).rating).toBe("unrated");
   });
 
-  it("a smart shelf returns exactly what the library list returns for the same filters", () => {
+  it("a smart shelf's params are the library list's params for the same filters", () => {
     const raw = { my: "reading", partner: undefined, own: "owned" } as const;
     const params = parseLibraryParams({ ...raw, sort: "title" });
     const viaLibrary = applyLibraryQuery(items, params).map((i) => i.id);
-    const viaShelf = evaluateSmart(items, { rules: rulesFromParams(params), sort: "title" }).map((i) => i.id);
+    const viaShelf = applyLibraryQuery(items, paramsFromRules(rulesFromParams(params), "title")).map((i) => i.id);
     expect(viaShelf).toEqual(viaLibrary);
     expect(viaShelf).toEqual(["2"]);
   });
 
   it("evaluates my status for the viewer, whoever that is", () => {
     const rules = { my: "reading" as const };
-    expect(evaluateSmart(items, { rules, sort: "title" }).map((i) => i.id)).toEqual(["2"]);
+    expect(applyLibraryQuery(items, paramsFromRules(rules, "title")).map((i) => i.id)).toEqual(["2"]);
     // The same rules for a viewer whose items carry different "mine" values.
     const theirs = [item({ id: "9", title: "Zorba", mine: { status: "reading", rating: null } }), item({ id: "8", title: "Yes", mine: null })];
-    expect(evaluateSmart(theirs, { rules, sort: "title" }).map((i) => i.id)).toEqual(["9"]);
+    expect(applyLibraryQuery(theirs, paramsFromRules(rules, "title")).map((i) => i.id)).toEqual(["9"]);
   });
 
   it("partner rules look at the other members", () => {
-    expect(evaluateSmart(items, { rules: { partner: "reading" }, sort: "title" }).map((i) => i.id)).toEqual(["3"]);
+    expect(applyLibraryQuery(items, paramsFromRules({ partner: "reading" }, "title")).map((i) => i.id)).toEqual(["3"]);
   });
 
   it("describes rules as readable chips", () => {

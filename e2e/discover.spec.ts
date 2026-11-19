@@ -43,7 +43,7 @@ test("each section explains its state instead of showing nothing", async ({ page
     const section = page.getByRole("region", { name });
     await expect(
       section
-        .getByText(/Nothing chosen yet|Last updated|rated|not available|second reader|refreshes left today|No refreshes left today/)
+        .getByText(/Nothing chosen yet|Last updated|rated|books on your shelves|not available|second reader|refreshes left today|No refreshes left today/)
         .first(),
     ).toBeVisible();
   }

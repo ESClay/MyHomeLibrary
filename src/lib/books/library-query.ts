@@ -51,7 +51,6 @@ export function defaultDir(sort: Sort): "asc" | "desc" {
 }
 
 export const PAGE_SIZE = 48;
-export const MAX_LIMIT = 2000;
 
 export type LibraryParams = {
   q: string;
@@ -68,8 +67,6 @@ export type LibraryParams = {
   rating: number | "unrated" | null;
   sort: Sort;
   dir: "asc" | "desc";
-  /** how many results to show */
-  limit: number;
 };
 
 type Raw = Record<string, string | string[] | undefined>;
@@ -83,13 +80,12 @@ function oneOf<T extends string>(v: string | undefined, allowed: readonly T[]): 
   return v && (allowed as readonly string[]).includes(v) ? (v as T) : null;
 }
 
-/** Reads and validates library URL params; unknown values fall back to defaults. */
+/** Reads and validates library URL params; unknown values fall back to defaults. An old `?limit=` is ignored (the list pages itself). */
 export function parseLibraryParams(raw: Raw): LibraryParams {
   const sort = oneOf(one(raw, "sort"), SORTS) ?? "added";
   const dir = oneOf(one(raw, "dir"), ["asc", "desc"] as const) ?? DEFAULT_DIR[sort];
   const ratingRaw = one(raw, "rating");
   const ratingNum = ratingRaw ? Number(ratingRaw) : NaN;
-  const limit = Number(one(raw, "limit"));
   return {
     q: (one(raw, "q") ?? "").slice(0, 100),
     my: oneOf(one(raw, "my"), [...STATUSES, "none"] as const),
@@ -106,26 +102,28 @@ export function parseLibraryParams(raw: Raw): LibraryParams {
           : null,
     sort,
     dir,
-    limit: Number.isFinite(limit) && limit >= PAGE_SIZE ? Math.min(Math.floor(limit), MAX_LIMIT) : PAGE_SIZE,
   };
+}
+
+/** Params as the raw string map the URL carries, defaults omitted. Parsing it back gives the same params. */
+export function paramsToRaw(p: LibraryParams): Record<string, string> {
+  const raw: Record<string, string> = {};
+  if (p.q) raw.q = p.q;
+  if (p.my) raw.my = p.my;
+  if (p.partner) raw.partner = p.partner;
+  if (p.format) raw.format = p.format;
+  if (p.own) raw.own = p.own;
+  if (p.series) raw.series = p.series;
+  if (p.loan) raw.loan = p.loan;
+  if (p.rating !== null) raw.rating = String(p.rating);
+  if (p.sort !== "added") raw.sort = p.sort;
+  if (p.dir !== DEFAULT_DIR[p.sort]) raw.dir = p.dir;
+  return raw;
 }
 
 /** Serializes params for a URL, omitting defaults. `overrides` replace fields. */
 export function libraryHref(params: LibraryParams, overrides: Partial<LibraryParams> = {}): string {
-  const p = { ...params, ...overrides };
-  const sp = new URLSearchParams();
-  if (p.q) sp.set("q", p.q);
-  if (p.my) sp.set("my", p.my);
-  if (p.partner) sp.set("partner", p.partner);
-  if (p.format) sp.set("format", p.format);
-  if (p.own) sp.set("own", p.own);
-  if (p.series) sp.set("series", p.series);
-  if (p.loan) sp.set("loan", p.loan);
-  if (p.rating !== null) sp.set("rating", String(p.rating));
-  if (p.sort !== "added") sp.set("sort", p.sort);
-  if (p.dir !== DEFAULT_DIR[p.sort]) sp.set("dir", p.dir);
-  if (p.limit > PAGE_SIZE) sp.set("limit", String(p.limit));
-  const s = sp.toString();
+  const s = new URLSearchParams(paramsToRaw({ ...params, ...overrides })).toString();
   return s ? `/library?${s}` : "/library";
 }
 
@@ -139,8 +137,13 @@ const fold = (s: string) =>
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase();
 
+/** The search terms of a query: folded, split on whitespace. `library_page` matches each as a substring of `search_folded`. */
+export function queryTerms(q: string): string[] {
+  return fold(q).split(/\s+/).filter(Boolean);
+}
+
 export function matchesQuery(item: LibraryItem, q: string): boolean {
-  const terms = fold(q).split(/\s+/).filter(Boolean);
+  const terms = queryTerms(q);
   if (terms.length === 0) return true;
   const hay = fold([item.title, ...item.authors, item.seriesName ?? ""].join(" "));
   return terms.every((t) => hay.includes(t));
@@ -189,7 +192,15 @@ function numeric(a: number | null, b: number | null, dir: "asc" | "desc"): numbe
   return dir === "asc" ? a - b : b - a;
 }
 
+/**
+ * The reference order. `library_page` (supabase/migrations/20261122000000_library_page.sql) reproduces it in SQL, and
+ * both tests use one fixture. Ties end on the book id so a page boundary never moves between requests.
+ */
 export function compareItems(a: LibraryItem, b: LibraryItem, sort: Sort, dir: "asc" | "desc"): number {
+  return compareByKey(a, b, sort, dir) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+function compareByKey(a: LibraryItem, b: LibraryItem, sort: Sort, dir: "asc" | "desc"): number {
   const sign = dir === "asc" ? 1 : -1;
   const byTitle = () => collator.compare(sortTitle(a.title), sortTitle(b.title));
   let r = 0;

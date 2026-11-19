@@ -6,7 +6,7 @@ const personal = (picks: unknown[]) => JSON.stringify({ picks });
 describe("parsePicks (personal)", () => {
   it("parses well-formed picks", () => {
     const out = parsePicks(
-      personal([{ title: "  The Left Hand of Darkness ", authors: ["Ursula K. Le Guin"], reason: "You loved Dune.\nIt shares its politics.", series: "Hainish Cycle", seriesPosition: 4 }]),
+      personal([{ category: "shelves", title: "  The Left Hand of Darkness ", authors: ["Ursula K. Le Guin"], reason: "You loved Dune.\nIt shares its politics.", series: "Hainish Cycle", seriesPosition: 4 }]),
       "personal",
     );
     expect(out).toEqual({
@@ -20,6 +20,7 @@ describe("parsePicks (personal)", () => {
           fit: [],
           series: "Hainish Cycle",
           seriesPosition: 4,
+          category: "shelves",
         },
       ],
     });
@@ -28,9 +29,9 @@ describe("parsePicks (personal)", () => {
   it("drops malformed, authorless and reasonless picks and counts them", () => {
     const out = parsePicks(
       personal([
-        { title: "Good", authors: ["A"], reason: "ok", series: null, seriesPosition: null },
-        { title: "No author", authors: [], reason: "ok", series: null, seriesPosition: null },
-        { title: "No reason", authors: ["A"], reason: "  ", series: null, seriesPosition: null },
+        { category: "ratings", title: "Good", authors: ["A"], reason: "ok", series: null, seriesPosition: null },
+        { category: "ratings", title: "No author", authors: [], reason: "ok", series: null, seriesPosition: null },
+        { category: "ratings", title: "No reason", authors: ["A"], reason: "  ", series: null, seriesPosition: null },
         { authors: ["A"], reason: "no title" },
         "nonsense",
       ]),
@@ -41,8 +42,18 @@ describe("parsePicks (personal)", () => {
   });
 
   it("ignores a series position without a series or a negative one", () => {
-    const out = parsePicks(personal([{ title: "A", authors: ["B"], reason: "r", series: null, seriesPosition: 3 }, { title: "C", authors: ["D"], reason: "r", series: "S", seriesPosition: -1 }]), "personal");
+    const out = parsePicks(personal([{ category: "authors", title: "A", authors: ["B"], reason: "r", series: null, seriesPosition: 3 }, { category: "authors", title: "C", authors: ["D"], reason: "r", series: "S", seriesPosition: -1 }]), "personal");
     expect(out.ok && out.picks.map((p) => p.seriesPosition)).toEqual([null, null]);
+  });
+
+  it("keeps the group of each pick and drops picks with an unknown, missing or unasked-for group", () => {
+    const pick = (title: string, category?: string) => ({ ...(category ? { category } : {}), title, authors: ["A"], reason: "r", series: null, seriesPosition: null });
+    const text = personal([pick("S", "shelves"), pick("R", "ratings"), pick("U", "authors"), pick("Bad", "other"), pick("None")]);
+    const all = parsePicks(text, "personal");
+    expect(all.ok && all.picks.map((p) => `${p.title}:${p.category}`)).toEqual(["S:shelves", "R:ratings", "U:authors"]);
+    expect(all.ok && all.dropped).toBe(2);
+    const some = parsePicks(text, "personal", [], ["shelves", "authors"]);
+    expect(some.ok && some.picks.map((p) => p.title)).toEqual(["S", "U"]);
   });
 
   it("rejects non-JSON and the wrong shape", () => {
@@ -52,7 +63,7 @@ describe("parsePicks (personal)", () => {
   });
 
   it("caps the number of picks", () => {
-    const many = Array.from({ length: 80 }, (_, i) => ({ title: `T${i}`, authors: ["A"], reason: "r", series: null, seriesPosition: null }));
+    const many = Array.from({ length: 80 }, (_, i) => ({ category: "shelves", title: `T${i}`, authors: ["A"], reason: "r", series: null, seriesPosition: null }));
     const out = parsePicks(personal(many), "personal");
     expect(out.ok && out.picks).toHaveLength(MAX_PICKS);
   });
@@ -88,6 +99,9 @@ describe("schemas", () => {
       expect(Object.keys(item.properties).sort()).toEqual([...item.required].sort());
       expect(item.properties.series.type).toEqual(["string", "null"]);
     }
+    const cat = PERSONAL_SCHEMA.properties.picks.items.properties.category;
+    expect(cat.enum).toEqual(["shelves", "ratings", "authors"]);
+    expect(PERSONAL_SCHEMA.properties.picks.items.required).toContain("category");
     expect(schemaFor("personal")).toBe(PERSONAL_SCHEMA);
     expect(schemaFor("shared")).toBe(SHARED_SCHEMA);
   });

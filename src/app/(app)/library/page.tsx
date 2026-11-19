@@ -3,8 +3,8 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { Button } from "@/components/ui/button";
 import { EmptyState, PageHeader, SpineRow } from "@/components/shelf";
-import { loadLibraryItems } from "@/lib/books/data";
-import { applyLibraryQuery, parseLibraryParams } from "@/lib/books/library-query";
+import { countLibraryBooks, loadLibraryPageItems, loadSeriesNames } from "@/lib/books/data";
+import { PAGE_SIZE, parseLibraryParams } from "@/lib/books/library-query";
 import { getLibraryContext } from "@/lib/library";
 import { loadShelf } from "@/lib/shelves/data";
 import { canWriteShelf } from "@/lib/shelves/permissions";
@@ -21,19 +21,22 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   const params = parseLibraryParams(search);
   // "Edit rules" on a smart shelf comes here with ?editShelf=<id>; only a smart shelf this person may change counts.
   const editId = typeof search.editShelf === "string" && /^[0-9a-f-]{36}$/i.test(search.editShelf) ? search.editShelf : null;
-  const editing = editId ? await loadShelf(editId) : null;
-  const editShelf =
-    editing && editing.kind === "smart" && editing.libraryId === current.id && canWriteShelf(current.role, user.id, editing)
-      ? { id: editing.id, name: editing.name }
-      : null;
   const supabase = await createClient();
-  const [all, members, cookieStore] = await Promise.all([
-    loadLibraryItems(current.id, user.id),
+  const [editing, page, librarySize, seriesNames, members, cookieStore] = await Promise.all([
+    editId ? loadShelf(editId) : Promise.resolve(null),
+    loadLibraryPageItems(current.id, user.id, params, { limit: PAGE_SIZE }),
+    countLibraryBooks(current.id),
+    loadSeriesNames(current.id),
     supabase.from("library_members").select("user_id", { count: "exact", head: true }).eq("library_id", current.id),
     cookies(),
   ]);
 
-  if (all.length === 0) {
+  const editShelf =
+    editing && editing.kind === "smart" && editing.libraryId === current.id && canWriteShelf(current.role, user.id, editing)
+      ? { id: editing.id, name: editing.name }
+      : null;
+
+  if (librarySize === 0) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
         <PageHeader eyebrow="Your books" title="Library" lede="Every book in your home, searchable by title, author or series." />
@@ -66,20 +69,16 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
     );
   }
 
-  const matches = applyLibraryQuery(all, params);
-  const shown = matches.slice(0, params.limit);
-  const seriesNames = [...new Set(all.map((i) => i.seriesName).filter((s): s is string => !!s))].sort((a, b) =>
-    a.localeCompare(b, "en", { sensitivity: "base" }),
-  );
   const view: ViewMode = cookieStore.get(VIEW_COOKIE)?.value === "list" ? "list" : "grid";
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <PageHeader eyebrow={current.name} title="Library" />
       <LibraryBrowser
-        items={shown}
-        total={matches.length}
-        librarySize={all.length}
+        items={page.items}
+        hasMore={page.total > PAGE_SIZE}
+        total={page.total}
+        librarySize={librarySize}
         params={params}
         seriesNames={seriesNames}
         hasPartners={(members.count ?? 1) > 1}

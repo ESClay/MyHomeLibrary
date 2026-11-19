@@ -25,9 +25,12 @@ type EntryRow = {
 };
 
 /** The library's series gaps, read through the signed-in user's own client (series tables are readable by signed-in users). */
-export async function loadSeriesOverview(client: SupabaseClient, libraryId: string): Promise<SeriesOverview> {
-  const books = await loadLibraryBooks(client, libraryId);
-  const { data: textRows } = await client.from("books").select("id, series_id, series_name, hardcover_id").eq("library_id", libraryId);
+export async function loadSeriesOverview(client: SupabaseClient, libraryId: string, loaded?: Awaited<ReturnType<typeof loadLibraryBooks>>): Promise<SeriesOverview> {
+  // The two reads do not depend on each other; a caller that already has the library's books can pass them in.
+  const [books, { data: textRows }] = await Promise.all([
+    loaded ?? loadLibraryBooks(client, libraryId),
+    client.from("books").select("id, series_id, series_name, hardcover_id").eq("library_id", libraryId),
+  ]);
   const withSeriesText = (textRows ?? []).filter((b) => b.series_id || b.series_name).length;
   const unsynced = (textRows ?? []).filter((b) => !b.series_id && (b.series_name || b.hardcover_id)).length;
 

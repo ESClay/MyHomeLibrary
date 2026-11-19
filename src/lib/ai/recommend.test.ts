@@ -48,13 +48,24 @@ describe("buildRequest", () => {
 });
 
 describe("requestPicks", () => {
-  const good = JSON.stringify({ picks: [{ title: "Piranesi", authors: ["Susanna Clarke"], reason: "Because.", series: null, seriesPosition: null }] });
+  const good = JSON.stringify({ picks: [{ category: "shelves", title: "Piranesi", authors: ["Susanna Clarke"], reason: "Because.", series: null, seriesPosition: null }] });
 
   it("parses a normal answer and reports usage and the serving model", async () => {
     const r = await requestPicks(prompt, "personal", { client: clientReturning(message({ text: good, model: "claude-opus-4-8" })) });
     expect(r.picks.map((p) => p.title)).toEqual(["Piranesi"]);
     expect(r.usage).toEqual({ inputTokens: 1000, outputTokens: 500 });
     expect(r.model).toBe("claude-opus-4-8");
+  });
+
+  it("keeps only picks in the groups the prompt asked for", async () => {
+    const text = JSON.stringify({
+      picks: ["shelves", "ratings"].map((category) => ({ category, title: `T ${category}`, authors: ["A"], reason: "r", series: null, seriesPosition: null })),
+    });
+    // The empty prompt has no ratings, so only "shelves" was asked for.
+    expect(prompt.categories).toEqual(["shelves"]);
+    const r = await requestPicks(prompt, "personal", { client: clientReturning(message({ text })) });
+    expect(r.picks.map((p) => p.category)).toEqual(["shelves"]);
+    expect(r.dropped).toBe(1);
   });
 
   it("checks stop_reason before reading content", async () => {

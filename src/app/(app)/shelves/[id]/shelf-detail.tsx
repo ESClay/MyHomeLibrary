@@ -1,9 +1,9 @@
 "use client";
 
-import { useReducer, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowLeft, ArrowUp, CheckSquare, GripVertical, LayoutGrid, List, Pencil, Rows3, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, CheckSquare, GripVertical, LayoutGrid, List, Loader2, Pencil, Rows3, SlidersHorizontal, Trash2 } from "lucide-react";
 import { BookGrid, BookList, type ViewMode } from "@/components/book-grid";
 import { Cover } from "@/components/cover";
 import { PrivateMark, ShelfBadge } from "@/components/shelf-icon";
@@ -18,7 +18,12 @@ import { moveItem, orderReducer } from "@/lib/shelves/order";
 import { describeRules } from "@/lib/shelves/rules";
 import type { Shelf } from "@/lib/shelves/types";
 import { cn } from "@/lib/utils";
-import { deleteShelf, moveShelfBook, removeBooksFromShelf } from "../actions";
+import { deleteShelf, loadShelfPage, moveShelfBook, removeBooksFromShelf } from "../actions";
+
+/** Start loading the next page this far before the end of the list (the library list uses the same). */
+const LOAD_AHEAD = "800px";
+
+type Feed = { extra: LibraryItem[]; hasMore: boolean; status: "idle" | "loading" | "error" };
 
 function SortRow({
   book,
@@ -78,7 +83,9 @@ function SortRow({
 
 export function ShelfDetail({
   shelf,
-  books,
+  books: firstPage,
+  total,
+  hasMore: firstHasMore,
   libraryName,
   role,
   canManage,
@@ -86,7 +93,10 @@ export function ShelfDetail({
   rulesHref,
 }: {
   shelf: Shelf;
+  /** All of a manual shelf's books, or the first page of a smart shelf's. */
   books: LibraryItem[];
+  total: number;
+  hasMore: boolean;
   libraryName: string;
   role: LibraryRole;
   canManage: boolean;
@@ -103,6 +113,41 @@ export function ShelfDetail({
   const [error, setError] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
   const [pending, start] = useTransition();
+  // A smart shelf's later pages. The page remounts (its key) when the shelf's books change, which starts the feed over.
+  const [feed, setFeed] = useState<Feed>({ extra: [], hasMore: firstHasMore, status: "idle" });
+  const books = feed.extra.length ? [...firstPage, ...feed.extra] : firstPage;
+  const sentinel = useRef<HTMLDivElement>(null);
+  const inFlight = useRef(false);
+  const count = useRef(books.length);
+  useEffect(() => {
+    count.current = books.length;
+  });
+  const loadMore = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setFeed((f) => ({ ...f, status: "loading" }));
+    let res: Awaited<ReturnType<typeof loadShelfPage>>;
+    try {
+      res = await loadShelfPage({ shelfId: shelf.id, offset: count.current });
+    } catch {
+      res = { ok: false, error: "Could not load more books." };
+    }
+    inFlight.current = false;
+    setFeed((f) => {
+      if (!res.ok) return { ...f, status: "error" };
+      const seen = new Set([...firstPage, ...f.extra].map((i) => i.id));
+      return { extra: [...f.extra, ...res.items.filter((i) => !seen.has(i.id))], hasMore: res.hasMore, status: "idle" };
+    });
+  }, [shelf.id, firstPage]);
+  const canObserve = feed.hasMore && feed.status === "idle";
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!canObserve || !el) return;
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && void loadMore(), { rootMargin: `0px 0px ${LOAD_AHEAD} 0px` });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [canObserve, books.length, loadMore]);
+
   const [order, dispatch] = useReducer(orderReducer, books.map((b) => b.id));
   const saved = useRef(order);
 
@@ -186,7 +231,7 @@ export function ShelfDetail({
             </p>
             <h1 className="page-title break-words">{shelf.name}</h1>
             <p className="text-sm text-muted-foreground">
-              {books.length} {books.length === 1 ? "book" : "books"} · {SHELF_SORT_LABEL[shelf.sort]}
+              {total} {total === 1 ? "book" : "books"} · {SHELF_SORT_LABEL[shelf.sort]}
             </p>
           </div>
         </div>
@@ -295,6 +340,24 @@ export function ShelfDetail({
             <BookGrid items={shown} pending={pending} selection={{ on: selecting, selected, toggle }} />
           ) : (
             <BookList items={shown} pending={pending} selection={{ on: selecting, selected, toggle }} />
+          )}
+          {(feed.hasMore || feed.status === "error") && (
+            <div className="flex min-h-12 flex-col items-center justify-center gap-2 pt-2 text-sm text-muted-foreground">
+              {feed.hasMore && <div ref={sentinel} aria-hidden className="h-px w-full" />}
+              {feed.status === "loading" && (
+                <p role="status" className="flex items-center gap-2">
+                  <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden /> Loading more books
+                </p>
+              )}
+              {feed.status === "error" && (
+                <div role="alert" className="flex items-center gap-3">
+                  <span>Could not load more books.</span>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setFeed((f) => ({ ...f, status: "idle" }))}>
+                    Try again
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
         </>
       )}

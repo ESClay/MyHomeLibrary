@@ -55,6 +55,10 @@ export function fakeSupabase(tables: Record<string, Row[]>, rpc: (fn: string, ar
         rows.sort((a, b) => String(a[col]).localeCompare(String(b[col])));
         return api;
       },
+      range: (from: number, to: number) => {
+        rows = rows.slice(from, to + 1);
+        return api;
+      },
       limit: (n: number) => {
         rows = rows.slice(0, n);
         return api;

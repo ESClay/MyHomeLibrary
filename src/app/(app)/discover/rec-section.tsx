@@ -6,7 +6,10 @@ import { useRouter } from "next/navigation";
 import { BookCheck, BookmarkPlus, Check, EyeOff, RefreshCw } from "lucide-react";
 import { Cover } from "@/components/cover";
 import { Locked } from "@/components/locked";
+import { PickCardsSkeleton } from "@/components/skeletons";
 import { Button } from "@/components/ui/button";
+import type { PersonalCategory } from "@/lib/ai/recommend-schema";
+import { PERSONAL_CATEGORIES } from "@/lib/ai/recommend-schema";
 import { markNotInterested, logAlreadyRead, refreshRecommendations, wishlistPick } from "./actions";
 import { ReadSheet } from "./read-sheet";
 
@@ -19,37 +22,51 @@ export type ClientPick = {
   series: string | null;
   coverUrl: string | null;
   year: string | null;
+  /** Personal picks: the group they are shown under. */
+  category?: PersonalCategory;
 };
 
 export type RecState =
-  | { kind: "ready" }
+  /** `ratingsLock`: set while the "Because you rated" group is still locked (personal only). */
+  | { kind: "ready"; ratingsLock: { rated: number; needed: number } | null }
   /** The server has no Anthropic key. */
   | { kind: "unavailable" }
-  | { kind: "needs-ratings"; rated: number; needed: number }
+  /** Personal: the library is too small to base picks on. */
+  | { kind: "needs-books"; have: number; needed: number }
   | { kind: "needs-members" }
   | { kind: "needs-both"; needed: number };
 
 export type CapView = { used: number; cap: number; remaining: number; reached: boolean; message: string | null };
 
+const GROUPS: Record<PersonalCategory, { title: string; lede: string }> = {
+  shelves: { title: "From your shelves", lede: "Books that fit the genres, authors and series you collect." },
+  ratings: { title: "Because you rated…", lede: "Chosen from your ratings, reading status and notes." },
+  authors: { title: "More from your authors", lede: "Books you do not own yet by authors already on your shelves." },
+};
+
 function Skeleton() {
   return (
-    <div aria-hidden className="grid gap-4 md:grid-cols-2">
-      {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="flex gap-4 rounded-[10px] border border-dashed border-input p-4">
-          <div className="book-cover w-20 shrink-0 animate-pulse border-0 shadow-none" />
-          <div className="flex flex-1 flex-col gap-2 pt-1">
-            <span className="h-3 w-3/5 animate-pulse rounded-full bg-muted" />
-            <span className="h-2.5 w-2/5 animate-pulse rounded-full bg-muted" />
-            <span className="mt-2 h-2.5 w-full animate-pulse rounded-full bg-muted" />
-            <span className="h-2.5 w-4/5 animate-pulse rounded-full bg-muted" />
-          </div>
-        </div>
-      ))}
+    <div aria-hidden>
+      <PickCardsSkeleton />
     </div>
   );
 }
 
-function RecCard({ pick, libraryId, canEdit, shared, onGone }: { pick: ClientPick; libraryId: string; canEdit: boolean; shared: boolean; onGone: (key: string) => void }) {
+function Group({ category, children }: { category: PersonalCategory; children: React.ReactNode }) {
+  const { title, lede } = GROUPS[category];
+  return (
+    <section aria-labelledby={`group-${category}`} className="flex flex-col gap-3">
+      <div className="flex flex-col gap-0.5 border-b border-border pb-2">
+        <h3 id={`group-${category}`} className="text-lg leading-snug font-medium">
+          {title}
+        </h3>
+        <p className="text-sm text-muted-foreground">{lede}</p>
+      </div>
+      {children}
+    </section>
+  );
+}
+function RecCard({ pick, libraryId, canEdit, shared, grouped, onGone }: { pick: ClientPick; libraryId: string; canEdit: boolean; shared: boolean; grouped: boolean; onGone: (key: string) => void }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -77,10 +94,13 @@ function RecCard({ pick, libraryId, canEdit, shared, onGone }: { pick: ClientPic
     <li className="panel flex flex-col gap-4 p-4">
       <div className="flex gap-4">
         <div className="w-20 shrink-0">
-          <Cover url={pick.coverUrl} title={pick.title} author={pick.authors[0]} />
+          <Cover url={pick.coverUrl} title={pick.title} author={pick.authors[0]} sizes="80px" />
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <h3 className="font-display text-lg leading-snug font-medium text-pretty">{pick.title}</h3>
+          {(() => {
+            const Heading = grouped ? "h4" : "h3";
+            return <Heading className="font-display text-lg leading-snug font-medium text-pretty">{pick.title}</Heading>;
+          })()}
           <p className="text-sm text-muted-foreground">
             {[pick.authors.slice(0, 2).join(" & "), pick.year].filter(Boolean).join(" · ")}
             {pick.series ? ` · ${pick.series}` : ""}
@@ -257,13 +277,13 @@ export function RecSection({
           Recommendations are not available on this server right now. Series gaps above still work, and picks return once the Claude API is connected.
         </p>
       )}
-      {!readOnly && state.kind === "needs-ratings" && (
+      {!readOnly && state.kind === "needs-books" && (
         <div className="flex flex-col gap-3">
           <p className="text-base text-muted-foreground">
-            Picks come from what you have rated. You have rated {state.rated} so far, and {state.needed} gives Claude enough to go on. Rating more books, and leaving a note on the ones you loved or dropped, makes the picks better.
+            Picks start from the books on your shelves. Your library has {state.have} so far, and {state.needed} gives Claude enough to go on.
           </p>
           <Button asChild variant="outline" className="self-start">
-            <Link href="/library">Open the library</Link>
+            <Link href="/add">Add a book</Link>
           </Button>
         </div>
       )}
@@ -280,11 +300,38 @@ export function RecSection({
 
       {pending ? (
         <Skeleton />
+      ) : scope === "personal" ? (
+        <div className="flex flex-col gap-8">
+          {PERSONAL_CATEGORIES.map((category) => {
+            const inGroup = visible.filter((p) => (p.category ?? "ratings") === category);
+            const lock = category === "ratings" && state.kind === "ready" ? state.ratingsLock : null;
+            if (inGroup.length === 0 && !lock) return null;
+            return (
+              <Group key={category} category={category}>
+                {lock && (
+                  <p className="text-sm text-muted-foreground">
+                    Rate {lock.needed - lock.rated} more {lock.needed - lock.rated === 1 ? "book" : "books"} to unlock picks based on your ratings. You have rated {lock.rated} so far.{" "}
+                    <Link href="/library" className="font-medium text-foreground underline decoration-gilt decoration-2 underline-offset-4">
+                      Open the library
+                    </Link>
+                  </p>
+                )}
+                {inGroup.length > 0 && (
+                  <ul className="grid gap-4 md:grid-cols-2">
+                    {inGroup.map((p) => (
+                      <RecCard key={p.key} pick={p} libraryId={libraryId} canEdit={canEdit} shared={false} grouped onGone={(k) => setGone((g) => new Set(g).add(k))} />
+                    ))}
+                  </ul>
+                )}
+              </Group>
+            );
+          })}
+        </div>
       ) : (
         visible.length > 0 && (
           <ul className="grid gap-4 md:grid-cols-2">
             {visible.map((p) => (
-              <RecCard key={p.key} pick={p} libraryId={libraryId} canEdit={canEdit} shared={shared} onGone={(k) => setGone((s) => new Set(s).add(k))} />
+              <RecCard key={p.key} pick={p} libraryId={libraryId} canEdit={canEdit} shared={shared} grouped={false} onGone={(k) => setGone((g) => new Set(g).add(k))} />
             ))}
           </ul>
         )

@@ -91,7 +91,7 @@ function ReadingRow({ groups }: { groups: ReadingGroup[] }) {
 }
 
 function CoverImg({ c }: { c: { title: string; author: string | null; coverUrl: string | null } }) {
-  return <Cover url={c.coverUrl} title={c.title} author={c.author ?? undefined} />;
+  return <Cover url={c.coverUrl} title={c.title} author={c.author ?? undefined} sizes="(min-width: 640px) 112px, 88px" />;
 }
 
 function ShelfRow({ row }: { row: ShelfRowData }) {

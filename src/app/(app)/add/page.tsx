@@ -18,8 +18,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ i
   const { user, current, currency } = await getLibraryContext();
   if (!current) return null; // The layout shows the create-library prompt.
   const editor = canEdit(current.role);
-  const borrowers = editor ? await loadBorrowers(current.id) : [];
-  const fullAccess = await hasFullAccess(await createClient(), user.id);
+  const [borrowers, fullAccess] = await Promise.all([editor ? loadBorrowers(current.id) : Promise.resolve([]), hasFullAccess(await createClient(), user.id)]);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">

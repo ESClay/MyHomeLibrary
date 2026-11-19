@@ -122,7 +122,7 @@ export async function requestPicks(
   const text = response.content.find((b): b is Anthropic.Beta.Messages.BetaTextBlock => b.type === "text");
   if (!text) throw new RecommendError("empty_answer", "Nothing came back. Try again.", usage);
 
-  const parsed = parsePicks(text.text, scope, prompt.people);
+  const parsed = parsePicks(text.text, scope, prompt.people, scope === "personal" && prompt.categories.length ? prompt.categories : undefined);
   if (!parsed.ok) throw new RecommendError("bad_answer", "The answer was garbled. Try again.", usage);
 
   return { picks: parsed.picks, dropped: parsed.dropped, usage, model: response.model };

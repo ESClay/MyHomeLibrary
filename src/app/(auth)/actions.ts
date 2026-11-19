@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { getOrigin } from "@/lib/origin";
 import { getRegion, isLocale, localeForRegion } from "@/lib/regions";
 import { safeNext } from "@/lib/redirect";
@@ -48,5 +49,6 @@ export async function signUp(_prev: AuthState, formData: FormData): Promise<Auth
 export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
+  revalidatePath("/", "layout"); // drop any cached pages of the signed-out account
   redirect("/sign-in");
 }

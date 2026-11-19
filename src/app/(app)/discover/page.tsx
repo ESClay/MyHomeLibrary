@@ -1,18 +1,21 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { hasFullAccess, libraryHasGrantedMember } from "@/lib/access";
 import { recommendConfigured } from "@/lib/ai/recommend";
-import { personalSignal, sharedSignal } from "@/lib/ai/recommend-prompt";
+import { personalReady, personalSignal, sharedSignal } from "@/lib/ai/recommend-prompt";
 import { canEdit } from "@/lib/books/access";
-import { getLibraryContext } from "@/lib/library";
+import { getLibraryContext, type LibraryRole } from "@/lib/library";
 import { capMessage, timeAgo } from "@/lib/discover/caps";
-import { buildLibraryIndex, inLibrary } from "@/lib/discover/match";
-import { latestSets, loadFeedback, loadLibraryBooks, loadMembers, loadUserRows, refreshUsage, type SetRow } from "@/lib/discover/recs";
+import { inLibrary } from "@/lib/discover/match";
+import { latestSets, loadMembers, loadUserRows, refreshUsage } from "@/lib/discover/recs";
 import { loadSeriesOverview, type SeriesOverview } from "@/lib/discover/series-data";
 import type { StoredPick } from "@/lib/discover/types";
 import { hardcoverConfigured } from "@/lib/metadata/hardcover";
 import { createClient } from "@/lib/supabase/server";
 import { Locked } from "@/components/locked";
+import { PickCardsSkeleton } from "@/components/skeletons";
 import { EmptyState, PageHeader, SpineRow } from "@/components/shelf";
+import { getDeclined, getLibraryBooks, getLibraryIndex } from "./loaders";
 import { FindSeriesButton, SeriesSection } from "./series-section";
 import { RecSection, type CapView, type ClientPick, type RecState } from "./rec-section";
 
@@ -39,8 +42,10 @@ function requestTime() {
   return Date.now();
 }
 
-const toClient = (p: StoredPick): ClientPick => ({
+const toClient = (p: StoredPick, scope: "personal" | "shared"): ClientPick => ({
   key: p.key,
+  // Sets stored before groups existed were all based on ratings.
+  category: scope === "personal" ? (p.category ?? "ratings") : undefined,
   title: p.title,
   authors: p.authors,
   reason: p.reason,
@@ -131,99 +136,112 @@ function SeriesBody({
   );
 }
 
+/** Placeholder for a section's body while its data loads; the panel's heading and lede are already on screen. */
+function BodySkeleton({ cards = 2 }: { cards?: number }) {
+  return (
+    <div role="status" aria-busy="true">
+      <span className="sr-only">Loading</span>
+      <PickCardsSkeleton count={cards} />
+    </div>
+  );
+}
+
+async function SeriesPanel({ libraryId, userId, role }: { libraryId: string; userId: string; role: LibraryRole }) {
+  const supabase = await createClient();
+  const syncConfigured = hardcoverConfigured() && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
+  // Claude and Hardcover are for people with full access. Without it, the series that a granted member of the library
+  // has already synced are still shown; everything that would call out is locked.
+  const [fullAccess, granted] = await Promise.all([hasFullAccess(supabase, userId), libraryHasGrantedMember(libraryId)]);
+  if (!fullAccess && !granted) return <Locked />;
+
+  let overview: SeriesOverview | null = null;
+  let failed = false;
+  try {
+    overview = await loadSeriesOverview(supabase, libraryId, await getLibraryBooks(libraryId));
+  } catch {
+    failed = true;
+  }
+  return <SeriesBody libraryId={libraryId} overview={overview} failed={failed} canEditLibrary={canEdit(role)} syncConfigured={syncConfigured} canSync={fullAccess} />;
+}
+
+/** The latest set of a scope, minus what is declined or already on the shelves, and today's refresh allowance. */
+async function sectionData(scope: "personal" | "shared", libraryId: string, userId: string, now: number) {
+  const supabase = await createClient();
+  const [sets, usage, declined, libraryIndex] = await Promise.all([
+    latestSets(supabase, scope, { libraryId, userId }),
+    refreshUsage(supabase, scope, { libraryId, userId }, now),
+    getDeclined(userId),
+    getLibraryIndex(libraryId),
+  ]);
+  const set = sets.latest;
+  const picks = (set?.items ?? [])
+    .filter((p) => !declined.has(p.key))
+    .filter((p) => !inLibrary(libraryIndex, { title: p.title, authors: p.authors, isbn13s: [p.book?.isbn13], hardcoverId: p.book?.ids?.hardcover ?? null }))
+    .map((p) => toClient(p, scope));
+  const cap: CapView = { used: usage.used, cap: usage.cap, remaining: usage.remaining, reached: usage.reached, message: usage.reached ? capMessage(scope, usage.nextAt, now) : null };
+  return { picks, cap, updatedAt: set?.generatedAt ?? null, updatedLabel: set ? timeAgo(set.generatedAt, now) : null };
+}
+
+async function PersonalSection({ libraryId, userId, role }: { libraryId: string; userId: string; role: LibraryRole }) {
+  const supabase = await createClient();
+  if (!(await hasFullAccess(supabase, userId))) return <Locked />;
+  const recsOn = recommendConfigured();
+  const [data, rows, books] = await Promise.all([sectionData("personal", libraryId, userId, requestTime()), loadUserRows(supabase, libraryId, [userId]), getLibraryBooks(libraryId)]);
+
+  // The library alone is enough to start from; ratings only unlock the "Because you rated" group.
+  const ready = personalReady(books.length);
+  const mine = personalSignal(rows, userId);
+  const state: RecState = !recsOn
+    ? { kind: "unavailable" }
+    : !ready.enough
+      ? { kind: "needs-books", have: ready.books, needed: ready.needed }
+      : { kind: "ready", ratingsLock: mine.enough ? null : { rated: mine.rated, needed: mine.needed } };
+  return <RecSection libraryId={libraryId} scope="personal" state={state} {...data} canEdit={canEdit(role)} />;
+}
+
+async function SharedSection({ libraryId, userId, role }: { libraryId: string; userId: string; role: LibraryRole }) {
+  const supabase = await createClient();
+  const recsOn = recommendConfigured();
+  const [fullAccess, data, members] = await Promise.all([hasFullAccess(supabase, userId), sectionData("shared", libraryId, userId, requestTime()), loadMembers(supabase, libraryId)]);
+  if (!fullAccess && data.picks.length === 0) return <Locked />;
+
+  // The shared signal needs every member's ratings, which the member policy on user_books allows.
+  let state: RecState;
+  if (!recsOn) state = { kind: "unavailable" };
+  else if (members.length < 2) state = { kind: "needs-members" };
+  else {
+    const all = await loadUserRows(supabase, libraryId, members.map((m) => m.id));
+    const sig = sharedSignal(all, members.map((m) => m.id));
+    state = sig.enough ? { kind: "ready", ratingsLock: null } : { kind: "needs-both", needed: sig.needed };
+  }
+  return <RecSection libraryId={libraryId} scope="shared" state={state} {...data} canEdit={canEdit(role)} readOnly={!fullAccess} />;
+}
+
 export default async function Page() {
   const { user, current } = await getLibraryContext();
   if (!current) return null; // The layout shows the create-library prompt.
 
-  const supabase = await createClient();
-  const now = requestTime();
-  const editor = canEdit(current.role);
-  const syncConfigured = hardcoverConfigured() && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
-  const recsOn = recommendConfigured();
-  // Claude and Hardcover are for people with full access. Without it, an existing shared set and the series that a granted
-  // member of the library has already synced are still shown; everything that would call out is locked.
-  const fullAccess = await hasFullAccess(supabase, user.id);
-  const seriesAvailable = fullAccess || (await libraryHasGrantedMember(current.id));
-
-  let overview: SeriesOverview | null = null;
-  let seriesFailed = false;
-  try {
-    overview = await loadSeriesOverview(supabase, current.id);
-  } catch {
-    seriesFailed = true;
-  }
-
-  // Everything the two recommendation sections need, read through the signed-in user's own client.
-  const [books, members, rows, feedback] = await Promise.all([
-    loadLibraryBooks(supabase, current.id),
-    loadMembers(supabase, current.id),
-    loadUserRows(supabase, current.id, [user.id]),
-    loadFeedback(supabase, [user.id]),
-  ]);
-  const libraryIndex = buildLibraryIndex(books);
-  const declined = new Set(feedback.map((f) => f.workKey)); // not interested, already read or wishlisted: no longer shown
-
-  async function sectionData(scope: "personal" | "shared") {
-    const [sets, usage] = await Promise.all([
-      latestSets(supabase, scope, { libraryId: current!.id, userId: user.id }),
-      refreshUsage(supabase, scope, { libraryId: current!.id, userId: user.id }, now),
-    ]);
-    const set: SetRow | null = sets.latest;
-    const picks = (set?.items ?? [])
-      .filter((p) => !declined.has(p.key))
-      .filter((p) => !inLibrary(libraryIndex, { title: p.title, authors: p.authors, isbn13s: [p.book?.isbn13], hardcoverId: p.book?.ids?.hardcover ?? null }))
-      .map(toClient);
-    const cap: CapView = { used: usage.used, cap: usage.cap, remaining: usage.remaining, reached: usage.reached, message: usage.reached ? capMessage(scope, usage.nextAt, now) : null };
-    return {
-      picks,
-      cap,
-      updatedAt: set?.generatedAt ?? null,
-      updatedLabel: set ? timeAgo(set.generatedAt, now) : null,
-    };
-  }
-
-  const personal = await sectionData("personal");
-  const shared = await sectionData("shared");
-
-  const mine = personalSignal(rows, user.id);
-  const personalState: RecState = !recsOn ? { kind: "unavailable" } : mine.enough ? { kind: "ready" } : { kind: "needs-ratings", rated: mine.rated, needed: mine.needed };
-
-  // The shared signal needs every member's ratings, which the member policy on user_books allows.
-  let sharedState: RecState;
-  if (!recsOn) sharedState = { kind: "unavailable" };
-  else if (members.length < 2) sharedState = { kind: "needs-members" };
-  else {
-    const all = await loadUserRows(supabase, current.id, members.map((m) => m.id));
-    const sig = sharedSignal(all, members.map((m) => m.id));
-    sharedState = sig.enough ? { kind: "ready" } : { kind: "needs-both", needed: sig.needed };
-  }
-
+  // The page shell renders at once; each section streams in when its own data is ready, and they load in parallel.
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
       <PageHeader eyebrow="What to read next" title="Discover" lede="Fill the gaps in the series you own, then find something new." />
 
       <SectionPanel index={1} title="Complete your series" lede="Volumes missing from the series on your shelves. Unreleased books and box sets are left out.">
-        {seriesAvailable ? (
-          <SeriesBody libraryId={current.id} overview={overview} failed={seriesFailed} canEditLibrary={editor} syncConfigured={syncConfigured} canSync={fullAccess} />
-        ) : (
-          <Locked />
-        )}
+        <Suspense fallback={<BodySkeleton cards={1} />}>
+          <SeriesPanel libraryId={current.id} userId={user.id} role={current.role} />
+        </Suspense>
       </SectionPanel>
 
-      <SectionPanel index={2} title="For you" lede="Picks based on what you have rated, finished and written about, each with the reason it was chosen.">
-        {fullAccess ? (
-          <RecSection libraryId={current.id} scope="personal" state={personalState} picks={personal.picks} updatedAt={personal.updatedAt} updatedLabel={personal.updatedLabel} cap={personal.cap} canEdit={editor} />
-        ) : (
-          <Locked />
-        )}
+      <SectionPanel index={2} title="For you" lede="Picks from what your shelves hold and what you have rated, grouped by how they were chosen, each with the reason it was picked.">
+        <Suspense fallback={<BodySkeleton />}>
+          <PersonalSection libraryId={current.id} userId={user.id} role={current.role} />
+        </Suspense>
       </SectionPanel>
 
       <SectionPanel index={3} title="For both of you" lede="Books the two of you would likely both enjoy, based on your ratings. Your notes are never used here.">
-        {fullAccess || shared.picks.length > 0 ? (
-          <RecSection libraryId={current.id} scope="shared" state={sharedState} picks={shared.picks} updatedAt={shared.updatedAt} updatedLabel={shared.updatedLabel} cap={shared.cap} canEdit={editor} readOnly={!fullAccess} />
-        ) : (
-          <Locked />
-        )}
+        <Suspense fallback={<BodySkeleton />}>
+          <SharedSection libraryId={current.id} userId={user.id} role={current.role} />
+        </Suspense>
       </SectionPanel>
     </div>
   );

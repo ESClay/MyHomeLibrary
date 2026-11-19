@@ -6,8 +6,16 @@ import { z } from "zod";
 
 export type RecommendScope = "personal" | "shared";
 
-/** Most picks kept from one answer, however many the model returned. */
-export const MAX_PICKS = 30;
+/**
+ * The groups of the personal ("For you") set, in display order: books like what is on the shelves, books from what
+ * the reader rated, and more by authors the library already holds. One model call fills every group.
+ */
+export const PERSONAL_CATEGORIES = ["shelves", "ratings", "authors"] as const;
+export type PersonalCategory = (typeof PERSONAL_CATEGORIES)[number];
+export const isPersonalCategory = (v: unknown): v is PersonalCategory => (PERSONAL_CATEGORIES as readonly unknown[]).includes(v);
+
+/** Most picks kept from one answer, however many the model returned (three groups of a few picks each, plus margin). */
+export const MAX_PICKS = 45;
 const REASON_MAX = 500;
 
 export type RawPick = {
@@ -19,6 +27,8 @@ export type RawPick = {
   fit: { person: string; why: string }[];
   series: string | null;
   seriesPosition: number | null;
+  /** Personal picks only: the group the model filed it under. */
+  category?: PersonalCategory;
 };
 
 const commonProps = {
@@ -40,8 +50,14 @@ export const PERSONAL_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["title", "authors", "reason", "series", "seriesPosition"],
+        required: ["category", "title", "authors", "reason", "series", "seriesPosition"],
         properties: {
+          category: {
+            type: "string",
+            enum: PERSONAL_CATEGORIES,
+            description:
+              "Which group this pick belongs to: shelves (like what the library holds), ratings (from the reader's own ratings and notes) or authors (another book by an author the library holds several of). Only the groups asked for.",
+          },
           ...commonProps,
           reason: { type: "string", description: "One or two sentences on why this reader would like it, tied to what they rated or wrote." },
         },
@@ -88,6 +104,7 @@ export const schemaFor = (scope: RecommendScope) => (scope === "personal" ? PERS
 const clean = (s: string, max: number) => s.replace(/\s+/g, " ").trim().slice(0, max);
 
 const rawPersonal = z.object({
+  category: z.string(),
   title: z.string(),
   authors: z.array(z.string()).default([]),
   reason: z.string(),
@@ -107,9 +124,10 @@ export type ParsedPicks = { ok: true; picks: RawPick[]; dropped: number } | { ok
 
 /**
  * Parses the model's JSON. `people` (shared scope) are the display names the prompt used: a fit line for any other
- * name is discarded, names are matched case-insensitively and a pick left with no valid line is dropped.
+ * name is discarded, names are matched case-insensitively and a pick left with no valid line is dropped. A personal
+ * pick needs one of the asked-for `categories` (any, when none are given); others are dropped.
  */
-export function parsePicks(text: string, scope: RecommendScope, people: string[] = []): ParsedPicks {
+export function parsePicks(text: string, scope: RecommendScope, people: string[] = [], categories?: readonly PersonalCategory[]): ParsedPicks {
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -146,7 +164,11 @@ export function parsePicks(text: string, scope: RecommendScope, people: string[]
         dropped++;
         continue;
       }
-      picks.push({ title, authors, reason, fit: [], series, seriesPosition });
+      if (!isPersonalCategory(d.category) || (categories && !categories.includes(d.category))) {
+        dropped++;
+        continue;
+      }
+      picks.push({ title, authors, reason, fit: [], series, seriesPosition, category: d.category });
     } else {
       const fit: RawPick["fit"] = [];
       for (const f of d.fit) {

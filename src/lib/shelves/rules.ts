@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { FORMATS, OWNERSHIP_LABEL, FORMAT_LABEL, STATUSES, STATUS_LABEL } from "@/lib/books/constants";
 import {
-  MAX_LIMIT,
   defaultDir,
   parseLibraryParams,
   type LibraryParams,
@@ -71,7 +70,6 @@ export function paramsFromRules(rules: ShelfRules, sort: ShelfSort = "series"): 
     rating: rules.rating === undefined ? undefined : String(rules.rating),
     sort: lib,
     dir: defaultDir(lib),
-    limit: String(MAX_LIMIT),
   });
 }
 

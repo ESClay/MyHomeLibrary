@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  PAGE_SIZE,
   activeFilterCount,
   applyLibraryQuery,
   libraryHref,
   parseLibraryParams,
+  queryTerms,
+  compareItems,
   type LibraryItem,
 } from "./library-query";
+import { FIXTURE_CASES, FIXTURE_ITEMS } from "./library-fixture";
 
 function item(over: Partial<LibraryItem> & { id: string; title: string }): LibraryItem {
   return {
@@ -39,11 +41,16 @@ const q = (raw: Record<string, string>) => applyLibraryQuery(items, parseLibrary
 describe("parseLibraryParams", () => {
   it("falls back to defaults for junk", () => {
     const p = parseLibraryParams({ sort: "nope", my: "zzz", limit: "5", rating: "9", format: "vinyl" });
-    expect(p).toMatchObject({ sort: "added", dir: "desc", my: null, limit: PAGE_SIZE, rating: null, format: null });
+    expect(p).toMatchObject({ sort: "added", dir: "desc", my: null, rating: null, format: null });
+  });
+  it("ignores an old ?limit=", () => {
+    const p = parseLibraryParams({ limit: "96" });
+    expect(p).not.toHaveProperty("limit");
+    expect(libraryHref(p)).toBe("/library");
   });
   it("keeps valid values and per-sort default direction", () => {
     const p = parseLibraryParams({ sort: "title", my: "none", rating: "unrated", limit: "96", series: "X" });
-    expect(p).toMatchObject({ sort: "title", dir: "asc", my: "none", rating: "unrated", limit: 96, series: "X" });
+    expect(p).toMatchObject({ sort: "title", dir: "asc", my: "none", rating: "unrated", series: "X" });
   });
   it("round-trips through libraryHref and omits defaults", () => {
     expect(libraryHref(parseLibraryParams({}))).toBe("/library");
@@ -124,5 +131,28 @@ describe("loan filters", () => {
     expect(parseLibraryParams({ loan: "nonsense" }).loan).toBeNull();
     expect(activeFilterCount(parseLibraryParams({ loan: "out" }))).toBe(1);
     expect(libraryHref(parseLibraryParams({ loan: "overdue" }))).toBe("/library?loan=overdue");
+  });
+});
+
+describe("the shared fixture (the same cases are asserted in supabase/tests/library_page.test.sql)", () => {
+  for (const c of FIXTURE_CASES) {
+    it(c.name, () => {
+      const got = applyLibraryQuery(FIXTURE_ITEMS, parseLibraryParams(c.raw)).map((i) => Number(i.id.slice(-12)));
+      expect(got).toEqual(c.expected);
+    });
+  }
+  it("compareItems ends on the id, whatever the input order", () => {
+    const [a, b] = FIXTURE_ITEMS.filter((i) => i.title.toLowerCase() === "twin title");
+    expect(compareItems(a, b, "title", "asc")).toBe(-1);
+    expect(compareItems(b, a, "title", "asc")).toBe(1);
+    expect(compareItems(b, a, "title", "desc")).toBe(1);
+    expect(compareItems(a, a, "title", "asc")).toBe(0);
+  });
+});
+
+describe("queryTerms", () => {
+  it("folds accents and case and splits on any whitespace", () => {
+    expect(queryTerms("  ÉCLAIR\t Études ")).toEqual(["eclair", "etudes"]);
+    expect(queryTerms("   ")).toEqual([]);
   });
 });

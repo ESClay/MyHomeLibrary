@@ -4,7 +4,7 @@ import type { LibraryRole } from "@/lib/library";
 import { activeLoans, type LoanLite } from "@/lib/loans/rules";
 import type { ExistingBook } from "@/lib/duplicates";
 import type { Condition, Format, Ownership, Status } from "./constants";
-import type { LibraryItem } from "./library-query";
+import { PAGE_SIZE, queryTerms, type LibraryItem, type LibraryParams } from "./library-query";
 
 type Json = Record<string, unknown>;
 
@@ -12,8 +12,6 @@ type Json = Record<string, unknown>;
 export function first<T>(v: T | T[] | null | undefined): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
 }
-
-const PAGE = 1000;
 
 type RawLoan = {
   id: string;
@@ -41,49 +39,115 @@ export function toLoan(r: RawLoan): LoanLite {
   };
 }
 
-/** Every book in a library with the per-person and copy data the list needs. */
-export async function loadLibraryItems(libraryId: string, userId: string): Promise<LibraryItem[]> {
-  const supabase = await createClient();
-  const rows: Json[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from("books")
-      .select(
-        "id, title, authors, series_name, series_position, cover_url, ownership, public_rating, created_at, copies(format, purchase_price), user_books(user_id, status, rating), loans(id, direction, copy_id, book_id, borrower_id, due_at, loaned_at, returned_at, borrowers(name))",
-      )
-      .eq("library_id", libraryId)
-      .order("created_at", { ascending: false })
-      .order("id")
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(error.message);
-    rows.push(...((data ?? []) as Json[]));
-    if (!data || data.length < PAGE) break;
-  }
+const ITEM_COLUMNS =
+  "id, title, authors, series_name, series_position, cover_url, ownership, public_rating, created_at, copies(format, purchase_price), user_books(user_id, status, rating), loans(id, direction, copy_id, book_id, borrower_id, due_at, loaned_at, returned_at, borrowers(name))";
 
+/** Books are read this many ids at a time: a long `in (...)` list would overflow the request URL. */
+const ID_CHUNK = 100;
+
+function toLibraryItem(r: Json, userId: string, now: Date): LibraryItem {
+  const copies = (r.copies as { format: Format; purchase_price: number | null }[]) ?? [];
+  const userBooks = (r.user_books as { user_id: string; status: Status; rating: number | null }[]) ?? [];
+  const prices = copies.map((c) => c.purchase_price).filter((p): p is number => p !== null);
+  const mine = userBooks.find((u) => u.user_id === userId);
+  const loans = activeLoans(((r.loans as RawLoan[]) ?? []).map(toLoan), now).map((l) => ({ id: l.id, direction: l.direction, borrowerName: l.borrowerName, dueAt: l.dueAt, overdue: l.overdue }));
+  return {
+    id: r.id as string,
+    title: r.title as string,
+    authors: (r.authors as string[]) ?? [],
+    seriesName: (r.series_name as string | null) ?? null,
+    seriesPosition: r.series_position === null ? null : Number(r.series_position),
+    coverUrl: (r.cover_url as string | null) ?? null,
+    ownership: r.ownership as Ownership,
+    publicRating: r.public_rating === null ? null : Number(r.public_rating),
+    createdAt: r.created_at as string,
+    formats: [...new Set(copies.map((c) => c.format))],
+    totalPaid: prices.length ? prices.reduce((a, b) => a + Number(b), 0) : null,
+    mine: mine ? { status: mine.status, rating: mine.rating === null ? null : Number(mine.rating) } : null,
+    others: userBooks.filter((u) => u.user_id !== userId).map((u) => ({ userId: u.user_id, status: u.status })),
+    loans,
+  } satisfies LibraryItem;
+}
+
+/**
+ * The given books with the per-person and copy data the list needs, in the order of `ids`. Ids the signed-in person
+ * cannot see (or that no longer exist) are left out. This is the only query that reads copies, statuses and loans.
+ */
+export async function loadLibraryItemsByIds(ids: string[], userId: string): Promise<LibraryItem[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  const supabase = await createClient();
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += ID_CHUNK) chunks.push(unique.slice(i, i + ID_CHUNK));
+  const results = await Promise.all(chunks.map((chunk) => supabase.from("books").select(ITEM_COLUMNS).in("id", chunk)));
   const now = new Date();
-  return rows.map((r) => {
-    const copies = (r.copies as { format: Format; purchase_price: number | null }[]) ?? [];
-    const userBooks = (r.user_books as { user_id: string; status: Status; rating: number | null }[]) ?? [];
-    const prices = copies.map((c) => c.purchase_price).filter((p): p is number => p !== null);
-    const mine = userBooks.find((u) => u.user_id === userId);
-    const loans = activeLoans(((r.loans as RawLoan[]) ?? []).map(toLoan), now).map((l) => ({ id: l.id, direction: l.direction, borrowerName: l.borrowerName, dueAt: l.dueAt, overdue: l.overdue }));
-    return {
-      id: r.id as string,
-      title: r.title as string,
-      authors: (r.authors as string[]) ?? [],
-      seriesName: (r.series_name as string | null) ?? null,
-      seriesPosition: r.series_position === null ? null : Number(r.series_position),
-      coverUrl: (r.cover_url as string | null) ?? null,
-      ownership: r.ownership as Ownership,
-      publicRating: r.public_rating === null ? null : Number(r.public_rating),
-      createdAt: r.created_at as string,
-      formats: [...new Set(copies.map((c) => c.format))],
-      totalPaid: prices.length ? prices.reduce((a, b) => a + Number(b), 0) : null,
-      mine: mine ? { status: mine.status, rating: mine.rating === null ? null : Number(mine.rating) } : null,
-      others: userBooks.filter((u) => u.user_id !== userId).map((u) => ({ userId: u.user_id, status: u.status })),
-      loans,
-    } satisfies LibraryItem;
+  const byId = new Map<string, LibraryItem>();
+  for (const { data, error } of results) {
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Json[]) byId.set(r.id as string, toLibraryItem(r, userId, now));
+  }
+  return ids.map((id) => byId.get(id)).filter((i): i is LibraryItem => !!i);
+}
+
+export type LibraryPageIds = { ids: string[]; total: number };
+
+/**
+ * One page of book ids for a library, filtered and sorted by the `library_page` SQL function: the same rules as
+ * applyLibraryQuery (the reference), run in the database. `total` is every match, not the page. `bookIds` limits the
+ * books considered, for a manual shelf. Row-level security decides what the caller can see.
+ */
+export async function loadLibraryPageIds(
+  libraryId: string,
+  params: LibraryParams,
+  opts: { offset?: number; limit?: number; bookIds?: string[] } = {},
+): Promise<LibraryPageIds> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("library_page", {
+    p_library_id: libraryId,
+    p_terms: params.q ? queryTerms(params.q) : null,
+    p_my: params.my,
+    p_partner: params.partner,
+    p_format: params.format,
+    p_own: params.own,
+    p_series: params.series,
+    p_loan: params.loan,
+    p_rating: params.rating === null ? null : String(params.rating),
+    p_sort: params.sort,
+    p_dir: params.dir,
+    p_offset: opts.offset ?? 0,
+    p_limit: opts.limit ?? PAGE_SIZE,
+    p_book_ids: opts.bookIds ?? null,
   });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as { book_id: string; total: number | string }[];
+  return { ids: rows.map((r) => r.book_id), total: rows.length ? Number(rows[0].total) : 0 };
+}
+
+/** A page of the library list: ids from the database, then details for just those books. */
+export async function loadLibraryPageItems(
+  libraryId: string,
+  userId: string,
+  params: LibraryParams,
+  opts: { offset?: number; limit?: number; bookIds?: string[] } = {},
+): Promise<{ items: LibraryItem[]; total: number }> {
+  const { ids, total } = await loadLibraryPageIds(libraryId, params, opts);
+  return { items: await loadLibraryItemsByIds(ids, userId), total };
+}
+
+/** How many books a library holds. */
+export async function countLibraryBooks(libraryId: string): Promise<number> {
+  const supabase = await createClient();
+  const { count, error } = await supabase.from("books").select("id", { count: "exact", head: true }).eq("library_id", libraryId);
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
+/** Every series name in a library, once each, in the order the filter shows them. */
+export async function loadSeriesNames(libraryId: string): Promise<string[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("library_series_names", { p_library_id: libraryId });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as string[]).sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
 }
 
 export type BookRow = {

@@ -6,7 +6,8 @@ import { requireUser, type LibraryRole } from "@/lib/library";
 import { createClient } from "@/lib/supabase/server";
 import { attachBooksToShelves } from "@/lib/shelves/assign";
 import type { ShelfColor, ShelfVisibility } from "@/lib/shelves/constants";
-import { loadShelf, loadShelfBookRefs, loadShelves } from "@/lib/shelves/data";
+import { loadShelf, loadShelfBookRefs, loadShelves, loadSmartShelfPage } from "@/lib/shelves/data";
+import type { LibraryItem } from "@/lib/books/library-query";
 import { canChangeShelfBooks, canCreateShelf, canEditShelf, canWriteShelf } from "@/lib/shelves/permissions";
 import { GAP, planMove, planReorder } from "@/lib/shelves/positions";
 import {
@@ -237,4 +238,20 @@ export async function listAssignableShelves(libraryId: string): Promise<ActionRe
     .filter((s) => canChangeShelfBooks(role, user.id, s))
     .map((s) => ({ id: s.id, name: s.name, color: s.color, icon: s.icon, visibility: s.visibility }));
   return { ok: true, role, shelves };
+}
+
+export type ShelfPageResult = { ok: true; items: LibraryItem[]; hasMore: boolean; total: number } | { ok: false; error: string };
+
+/** More books of a smart shelf, for infinite scroll. The shelf is read through RLS and the caller must be in its library. */
+export async function loadShelfPage(input: { shelfId: string; offset: number }): Promise<ShelfPageResult> {
+  const offset = Number.isFinite(input.offset) ? Math.max(0, Math.floor(input.offset)) : 0;
+  if (!/^[0-9a-f-]{36}$/i.test(input.shelfId)) return { ok: false, error: "That shelf does not exist." };
+  try {
+    const auth = await shelfAndRole(input.shelfId);
+    if (!auth.ok) return { ok: false, error: auth.error };
+    if (auth.shelf.kind !== "smart") return { ok: false, error: "Only smart shelves load in pages." };
+    return { ok: true, ...(await loadSmartShelfPage(auth.shelf, auth.user.id, offset)) };
+  } catch {
+    return { ok: false, error: "Could not load more books." };
+  }
 }

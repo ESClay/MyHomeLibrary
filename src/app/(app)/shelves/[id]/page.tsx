@@ -30,6 +30,8 @@ export default async function Page({ params }: Props) {
       key={detail.books.map((b) => b.id).join(",") + shelf.sort + shelf.name}
       shelf={shelf}
       books={detail.books}
+      total={detail.total}
+      hasMore={detail.hasMore}
       libraryName={lib.name}
       role={lib.role}
       canManage={manage}

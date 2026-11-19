@@ -2,10 +2,13 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RecommendError, requestPicks, RECOMMEND_MODEL, type RecommendUsage } from "@/lib/ai/recommend";
 import {
-  PERSONAL_TARGET,
+  PER_CATEGORY_TARGET,
   SHARED_TARGET,
   buildPersonalPrompt,
   buildSharedPrompt,
+  libraryProfile,
+  personalCategories,
+  personalReady,
   personalSignal,
   sharedSignal,
   type FeedbackRow,
@@ -18,10 +21,10 @@ import { FULL_ACCESS_NEEDED, hasFullAccess, libraryHasGrantedMember } from "@/li
 import { ALL_PROVIDERS, search } from "@/lib/metadata";
 import { capMessage, capWindowStart, nextRefreshAt, refreshCap } from "./caps";
 import { buildLibraryIndex, inLibrary, type LibraryBookLite } from "./match";
-import { buildPickSet } from "./pick-set";
+import { buildPickSet, type CategoryTargets } from "./pick-set";
 import type { StoredPick } from "./types";
 
-/** Not enough rated books yet; the message says how many more help. */
+/** Not enough books (or, for a shared set, ratings) yet; the message says how many more help. */
 export class NotEnoughSignal extends Error {
   constructor(message: string) {
     super(message);
@@ -57,16 +60,21 @@ type BookRow = {
   isbn13: string | null;
   hardcover_id: number | null;
   series_id: string | null;
+  series_name: string | null;
+  genres: string[] | null;
+  ownership: string | null;
   copies: { edition_isbn: string | null }[] | null;
 };
 
+export type LibraryBook = LibraryBookLite & { id: string; seriesId: string | null; seriesName: string | null; genres: string[]; ownership: string | null };
+
 /** Every book in the library (any ownership) in the shape the matchers use. */
-export async function loadLibraryBooks(client: SupabaseClient, libraryId: string): Promise<(LibraryBookLite & { id: string; seriesId: string | null })[]> {
-  const out: (LibraryBookLite & { id: string; seriesId: string | null })[] = [];
+export async function loadLibraryBooks(client: SupabaseClient, libraryId: string): Promise<LibraryBook[]> {
+  const out: LibraryBook[] = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await client
       .from("books")
-      .select("id, title, authors, isbn13, hardcover_id, series_id, copies(edition_isbn)")
+      .select("id, title, authors, isbn13, hardcover_id, series_id, series_name, genres, ownership, copies(edition_isbn)")
       .eq("library_id", libraryId)
       .order("id")
       .range(from, from + PAGE - 1);
@@ -79,6 +87,9 @@ export async function loadLibraryBooks(client: SupabaseClient, libraryId: string
         isbn13: b.isbn13,
         hardcoverId: b.hardcover_id,
         seriesId: b.series_id,
+        seriesName: b.series_name,
+        genres: b.genres ?? [],
+        ownership: b.ownership,
         copyIsbns: (b.copies ?? []).map((c) => c.edition_isbn).filter((i): i is string => !!i),
       });
     }
@@ -267,22 +278,26 @@ export async function generateSet(p: GenerateParams, now = Date.now()): Promise<
   const userIds = scope === "personal" ? [p.userId as string] : members.map((m) => m.id);
   const [books, rows] = await Promise.all([loadLibraryBooks(client, libraryId), loadUserRows(client, libraryId, userIds)]);
 
-  const library: LibraryTitle[] = books.map((b) => ({ title: b.title, authors: b.authors }));
+  const library: LibraryTitle[] = books.map((b) => ({ title: b.title, authors: b.authors, genres: b.genres, series: b.seriesName, ownership: b.ownership ?? undefined }));
   const libraryIndex = buildLibraryIndex(books);
 
   let makePrompt: Parameters<typeof buildPickSet>[0]["deps"]["prompt"];
   let target: number;
+  let categoryTargets: CategoryTargets | undefined;
   let ownFeedback: (FeedbackRow & { workKey: string })[] = [];
 
   if (scope === "personal") {
-    const signal = personalSignal(rows, p.userId as string);
-    if (!signal.enough) {
-      throw new NotEnoughSignal(`Rate at least ${signal.needed} books to get picks. You have rated ${signal.rated}.`);
+    // The library is enough to start from; ratings only unlock the "ratings" group.
+    const ready = personalReady(library.length);
+    if (!ready.enough) {
+      throw new NotEnoughSignal(`Add at least ${ready.needed} books to your library to get picks. It has ${ready.books}.`);
     }
+    const categories = personalCategories(libraryProfile(library), personalSignal(rows, p.userId as string).enough);
+    categoryTargets = Object.fromEntries(categories.map((c) => [c, PER_CATEGORY_TARGET]));
     ownFeedback = await loadFeedback(client, [p.userId as string]);
     const person = (await loadMembers(client, libraryId)).find((m) => m.id === p.userId) ?? { id: p.userId as string, name: "this reader" };
     makePrompt = (topUp) => buildPersonalPrompt({ person, rows, library, feedback: ownFeedback, topUp });
-    target = PERSONAL_TARGET;
+    target = PER_CATEGORY_TARGET * categories.length;
   } else {
     const signal = sharedSignal(rows, userIds);
     if (!signal.enough) {
@@ -312,6 +327,7 @@ export async function generateSet(p: GenerateParams, now = Date.now()): Promise<
     const set = await buildPickSet({
       scope,
       target,
+      categoryTargets,
       deps: { prompt: makePrompt, request: (prompt, s) => requestPicks(prompt, s), search: (q) => search(q, ALL_PROVIDERS), inLibrary: (c) => inLibrary(libraryIndex, c), blocked },
     });
     const prompt = makePrompt();

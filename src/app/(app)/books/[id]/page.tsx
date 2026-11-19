@@ -40,11 +40,10 @@ export default async function BookPage({ params }: Props) {
   if (!UUID.test(id)) notFound();
 
   const { user, locale, currency } = await getLibraryContext();
-  const [detail, bookShelves] = await Promise.all([loadBookDetail(id, user.id), loadShelvesForBook(id)]);
+  const [detail, bookShelves, fullAccess] = await Promise.all([loadBookDetail(id, user.id), loadShelvesForBook(id), hasFullAccess(await createClient(), user.id)]);
   if (!detail) notFound();
 
   const { book, copies, me, others, role, loans, priceHistory, priceRegion } = detail;
-  const fullAccess = await hasFullAccess(await createClient(), user.id);
   const borrowers = canEdit(role) ? await loadBorrowers(book.library_id) : [];
   const now = new Date();
   const active = activeLoans(loans, now);
@@ -65,7 +64,7 @@ export default async function BookPage({ params }: Props) {
 
       <header className="rise grid gap-6 md:grid-cols-[13rem_1fr] md:gap-10">
         <div className="mx-auto flex w-44 flex-col gap-0 md:mx-0 md:w-full">
-          <Cover url={book.cover_url} title={book.title} author={book.authors[0]} priority />
+          <Cover url={book.cover_url} title={book.title} author={book.authors[0]} priority sizes="(min-width: 768px) 208px, 176px" />
           <div className="shelf-line -mx-3 mt-0" aria-hidden />
         </div>
 

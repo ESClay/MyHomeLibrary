@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+import { isOptimizableCover } from "@/lib/cover-image";
 import { useId, useRef, useState } from "react";
 import { Camera, ImagePlus, Check, ImageOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -89,8 +91,15 @@ export function CoverPicker({
                 "relative block h-28 w-[4.5rem] overflow-hidden rounded-[4px] bg-paper-deep shadow-[var(--shadow-cover)] transition-transform duration-[var(--dur-fast)] hover:-translate-y-0.5 peer-checked:ring-2 peer-checked:ring-gilt peer-focus-visible:ring-2 peer-focus-visible:ring-ring",
               )}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={c.url} alt={`${c.label} cover option`} loading="lazy" referrerPolicy="no-referrer" className="size-full object-cover" />
+              <Image
+                src={c.url}
+                alt={`${c.label} cover option`}
+                fill
+                sizes="72px"
+                unoptimized={!isOptimizableCover(c.url)}
+                referrerPolicy="no-referrer"
+                className="object-cover"
+              />
               {value === c.url && (
                 <span className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-gilt text-background">
                   <Check className="size-3" aria-hidden />

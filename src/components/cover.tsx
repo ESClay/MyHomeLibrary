@@ -1,3 +1,5 @@
+import Image from "next/image";
+import { isOptimizableCover } from "@/lib/cover-image";
 import { cn } from "@/lib/utils";
 
 const TONES = ["bg-spine-1", "bg-spine-2", "bg-spine-3", "bg-spine-4", "bg-spine-5"] as const;
@@ -15,25 +17,30 @@ export function Cover({
   author,
   className,
   priority = false,
+  sizes = "64px",
 }: {
   url: string | null;
   title: string;
   author?: string;
   className?: string;
   priority?: boolean;
+  /** How wide the cover is drawn, for the browser to pick a variant. Default suits the small list thumbnails. */
+  sizes?: string;
 }) {
   return (
     <div className={cn("book-cover @container w-full", className)}>
       {url ? (
-        // Covers come from several providers and our storage bucket; they are remote and already sized.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        // fill + sizes: the box above sets the aspect ratio. Unknown hosts are not in images.remotePatterns, so they skip the optimizer.
+        <Image
           src={url}
           alt={`Cover of ${title}`}
+          fill
+          sizes={sizes}
+          preload={priority}
           loading={priority ? "eager" : "lazy"}
-          decoding="async"
+          unoptimized={!isOptimizableCover(url)}
           referrerPolicy="no-referrer"
-          className="size-full object-cover"
+          className="object-cover"
         />
       ) : (
         <div

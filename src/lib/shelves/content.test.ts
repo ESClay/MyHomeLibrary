@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LibraryItem } from "@/lib/books/library-query";
-import { buildReadingGroups, buildShelfRows, orderManual, sortShelves } from "./content";
+import { ROW_COVERS } from "./constants";
+import { buildReadingGroups, idsByPosition, readingCoverIds, sortShelves, type ReadingRow } from "./content";
 import type { Shelf } from "./types";
 
 function item(over: Partial<LibraryItem> & { id: string; title: string }): LibraryItem {
@@ -8,47 +9,38 @@ function item(over: Partial<LibraryItem> & { id: string; title: string }): Libra
 }
 const shelf = (over: Partial<Shelf>): Shelf => ({ id: "s", libraryId: "l", name: "S", color: "spine-1", icon: null, visibility: "shared", kind: "manual", rules: null, sort: "title", sortOrder: 1024, createdBy: "u", createdAt: "2026-01-01", ...over });
 
-const items = [
-  item({ id: "a", title: "Zebra", publicRating: 3, mine: { status: "reading", rating: 4 }, authors: ["Zed Last"] }),
-  item({ id: "b", title: "Apple", publicRating: 5, mine: { status: "read", rating: null }, others: [{ userId: "w", status: "reading" }], seriesName: "Fruit", seriesPosition: 2 }),
-  item({ id: "c", title: "Mango", publicRating: 4, seriesName: "Fruit", seriesPosition: 1, others: [{ userId: "w", status: "reading" }] }),
-];
 const refs = (...ids: [string, number][]) => ids.map(([bookId, position]) => ({ bookId, position }));
 
-describe("shelf sorting", () => {
-  const r = refs(["a", 3072], ["b", 1024], ["c", 2048]);
-  it("custom follows positions", () => expect(orderManual(items, r, "custom").map((i) => i.id)).toEqual(["b", "c", "a"]));
-  it("title sorts alphabetically", () => expect(orderManual(items, r, "title").map((i) => i.id)).toEqual(["b", "c", "a"]));
-  it("series keeps a series in order", () => expect(orderManual(items, r, "series").map((i) => i.id)).toEqual(["c", "b", "a"]));
-  it("public rating is best first, my rating puts unrated last", () => {
-    expect(orderManual(items, r, "public_rating").map((i) => i.id)).toEqual(["b", "c", "a"]);
-    expect(orderManual(items, r, "my_rating").map((i) => i.id)[0]).toBe("a");
-  });
-  it("skips memberships whose book is gone", () => expect(orderManual(items, refs(["zz", 1], ["a", 2]), "custom").map((i) => i.id)).toEqual(["a"]));
+describe("idsByPosition", () => {
+  it("follows the stored positions", () => expect(idsByPosition(refs(["a", 3072], ["b", 1024], ["c", 2048]))).toEqual(["b", "c", "a"]));
+  it("breaks a tie on the id", () => expect(idsByPosition(refs(["b", 5], ["a", 5], ["c", 1]))).toEqual(["c", "a", "b"]));
 });
 
-describe("buildShelfRows", () => {
-  it("counts everything but shows only the first 12 covers, in one pass", () => {
-    const many = Array.from({ length: 20 }, (_, i) => item({ id: `b${String(i).padStart(2, "0")}`, title: `Book ${i}` }));
-    const rows = buildShelfRows(
-      [shelf({ id: "m", sort: "custom" }), shelf({ id: "s", kind: "smart", rules: { own: "owned" }, sort: "title" })],
-      many,
-      many.map((b, i) => ({ shelfId: "m", bookId: b.id, position: (i + 1) * 1024 })),
-    );
-    expect(rows[0].count).toBe(20);
-    expect(rows[0].covers).toHaveLength(12);
-    expect(rows[1].count).toBe(20);
-    expect(rows[1].covers).toHaveLength(12);
-  });
-});
+const reading = (userId: string, bookId: string, createdAt: string): ReadingRow => ({ userId, bookId, createdAt });
+const items = new Map([
+  ["a", item({ id: "a", title: "Zebra" })],
+  ["b", item({ id: "b", title: "Apple" })],
+  ["c", item({ id: "c", title: "Mango" })],
+]);
 
 describe("currently reading", () => {
-  it("groups by person, me first, with names", () => {
-    const g = buildReadingGroups(items, new Map([["me", "Nic"], ["w", "Wife"]]), "me");
+  const rows = [reading("me", "a", "2026-01-01"), reading("w", "b", "2026-01-02"), reading("w", "c", "2026-01-03")];
+  it("groups by person, me first, with names, newest book first", () => {
+    const g = buildReadingGroups(rows, items, new Map([["me", "Nic"], ["w", "Wife"]]), "me");
     expect(g.map((x) => [x.name, x.count, x.isMe])).toEqual([["Nic", 1, true], ["Wife", 2, false]]);
+    expect(g[1].covers.map((c) => c.id)).toEqual(["c", "b"]);
   });
   it("leaves out people with nothing in progress", () => {
-    expect(buildReadingGroups([item({ id: "x", title: "X" })], new Map(), "me")).toEqual([]);
+    expect(buildReadingGroups([], items, new Map(), "me")).toEqual([]);
+  });
+  it("counts every book but shows and asks for only the first 12 covers", () => {
+    const many = Array.from({ length: 20 }, (_, i) => reading("me", `b${String(i).padStart(2, "0")}`, `2026-01-${String(i + 1).padStart(2, "0")}`));
+    expect(readingCoverIds(many)).toHaveLength(ROW_COVERS);
+    expect(readingCoverIds(many)[0]).toBe("b19");
+    const byId = new Map(many.map((r) => [r.bookId, item({ id: r.bookId, title: r.bookId })]));
+    const g = buildReadingGroups(many, byId, new Map(), "me");
+    expect(g[0].count).toBe(20);
+    expect(g[0].covers).toHaveLength(ROW_COVERS);
   });
 });
 

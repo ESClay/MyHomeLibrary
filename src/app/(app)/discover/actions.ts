@@ -144,7 +144,7 @@ export async function refreshRecommendations(input: { libraryId: string; scope: 
       blockFor: [who.user.id],
     });
     revalidatePath("/discover");
-    if (out.count === 0) return fail("Nothing new to suggest right now. Try again after rating a few more books.");
+    if (out.count === 0) return fail("Nothing new to suggest right now. Try again later, or after adding or rating a few more books.");
     return { ok: true, count: out.count };
   } catch (e) {
     revalidatePath("/discover");

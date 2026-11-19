@@ -5,7 +5,7 @@
 import type { BuiltPrompt, TopUp } from "@/lib/ai/recommend-prompt";
 import { TOP_UP_MARGIN } from "@/lib/ai/recommend-prompt";
 import { RecommendError, type RecommendResult, type RecommendUsage } from "@/lib/ai/recommend";
-import type { RawPick, RecommendScope } from "@/lib/ai/recommend-schema";
+import type { PersonalCategory, RawPick, RecommendScope } from "@/lib/ai/recommend-schema";
 import type { BookMetadata } from "@/lib/metadata/types";
 import { createLimiter } from "@/lib/scan/limiter";
 import { MATCH_THRESHOLD, rankCandidates } from "@/lib/scan/resolve";
@@ -54,8 +54,27 @@ const trimBook = (b: BookMetadata): BookMetadata => ({
   covers: b.covers.slice(0, 3),
 });
 
-export async function buildPickSet(input: { scope: RecommendScope; target: number; deps: PickSetDeps }): Promise<PickSet> {
-  const { scope, target, deps } = input;
+export type CategoryTargets = Partial<Record<PersonalCategory, number>>;
+
+/** How many more each group needs to reach its target. Groups already full are left out. */
+export function categoryShortfall(targets: CategoryTargets, have: Partial<Record<PersonalCategory, number>>): CategoryTargets {
+  const out: CategoryTargets = {};
+  for (const [c, want] of Object.entries(targets) as [PersonalCategory, number][]) {
+    const missing = want - (have[c] ?? 0);
+    if (missing > 0) out[c] = missing;
+  }
+  return out;
+}
+
+/**
+ * `target` is the size of the whole set. A personal set may also pass `categoryTargets` (picks wanted per group): a
+ * pick only counts while its group is short, so one group cannot crowd out another, and the top-up asks only for the
+ * groups that are still short. Without them every pick counts toward `target` alone.
+ */
+export async function buildPickSet(input: { scope: RecommendScope; target: number; categoryTargets?: CategoryTargets; deps: PickSetDeps }): Promise<PickSet> {
+  const { scope, deps, categoryTargets } = input;
+  const target = categoryTargets ? Object.values(categoryTargets).reduce((n, v) => n + (v ?? 0), 0) : input.target;
+  const have: Partial<Record<PersonalCategory, number>> = {};
   const items: StoredPick[] = [];
   const dropped: DropCounts = { notFound: 0, inLibrary: 0, blocked: 0, duplicate: 0 };
   const usage: RecommendUsage = { inputTokens: 0, outputTokens: 0 };
@@ -64,6 +83,8 @@ export async function buildPickSet(input: { scope: RecommendScope; target: numbe
   let model: string | null = null;
   let calls = 0;
   let topUpError: string | null = null;
+
+  const full = () => items.length >= target;
 
   async function round(topUp?: TopUp) {
     const prompt = deps.prompt(topUp);
@@ -86,7 +107,10 @@ export async function buildPickSet(input: { scope: RecommendScope; target: numbe
     const resolved = await Promise.all(result.picks.map((p) => run(() => resolvePick(p, deps.search))));
 
     result.picks.forEach((pick, i) => {
-      if (items.length >= target) return;
+      if (full()) return;
+      const cat = categoryTargets ? pick.category : undefined;
+      // A group that is already full (or one that was not asked for) takes no more picks.
+      if (categoryTargets && (!cat || (have[cat] ?? 0) >= (categoryTargets[cat] ?? 0))) return;
       const meta = resolved[i];
       const rawKey = workKey(pick.title, pick.authors);
       const reject = (why: keyof DropCounts) => {
@@ -113,15 +137,20 @@ export async function buildPickSet(input: { scope: RecommendScope; target: numbe
         reason: pick.reason,
         fit: pick.fit,
         series: pick.series ? { name: pick.series, position: pick.seriesPosition } : meta.seriesName ? { name: meta.seriesName, position: meta.seriesPosition } : null,
+        ...(cat ? { category: cat } : {}),
         book: trimBook(meta),
       });
+      if (cat) have[cat] = (have[cat] ?? 0) + 1;
     });
   }
 
   await round(); // a failure here is the caller's to handle: nothing was produced
-  if (items.length < target && calls < MAX_MODEL_CALLS) {
+  if (!full() && calls < MAX_MODEL_CALLS) {
     try {
-      await round({ need: target - items.length + TOP_UP_MARGIN, avoid: [...rejectedTitles, ...items.map((i) => i.title)] });
+      const short = categoryTargets ? categoryShortfall(categoryTargets, have) : undefined;
+      const perCategory = short && Object.fromEntries(Object.entries(short).map(([c, n]) => [c, n + TOP_UP_MARGIN]));
+      const need = short ? Object.values(perCategory ?? {}).reduce((n, v) => n + v, 0) : target - items.length + TOP_UP_MARGIN;
+      await round({ need, avoid: [...rejectedTitles, ...items.map((i) => i.title)], ...(perCategory ? { perCategory } : {}) });
     } catch (e) {
       topUpError = e instanceof Error ? e.message : "The top-up failed.";
     }

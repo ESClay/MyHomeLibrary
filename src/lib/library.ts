@@ -16,12 +16,19 @@ export type LibrarySummary = {
   priceRegion: string | null;
 };
 
-/** Signed-in user, or redirect to sign-in. Verified against the auth server. */
-export const requireUser = cache(async () => {
+/** The signed-in person, as far as pages and actions need them. */
+export type SessionUser = { id: string; email: string | null };
+
+/**
+ * Signed-in user, or redirect to sign-in. Reads the verified JWT claims (the proxy has already refreshed the session
+ * on this request), so it costs no round trip to the auth server. Data access is still enforced by RLS.
+ */
+export const requireUser = cache(async (): Promise<SessionUser> => {
   const supabase = await createClient();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect("/sign-in");
-  return data.user;
+  const { data } = await supabase.auth.getClaims();
+  const claims = data?.claims;
+  if (!claims?.sub) redirect("/sign-in");
+  return { id: claims.sub, email: typeof claims.email === "string" ? claims.email : null };
 });
 
 /** Libraries the user belongs to plus the currently selected one (cookie, else first). */
@@ -29,9 +36,10 @@ export const getLibraryContext = cache(async () => {
   const user = await requireUser();
   const supabase = await createClient();
 
-  const [{ data }, { data: profile }] = await Promise.all([
+  const [{ data }, { data: profile }, cookieStore] = await Promise.all([
     supabase.from("library_members").select("role, libraries(id, name, price_region)").eq("user_id", user.id).order("created_at"),
     supabase.from("profiles").select("region, locale").eq("id", user.id).maybeSingle(),
+    cookies(),
   ]);
 
   const libraries: LibrarySummary[] = (data ?? []).flatMap((row) => {
@@ -39,7 +47,6 @@ export const getLibraryContext = cache(async () => {
     return lib ? [{ id: lib.id, name: lib.name, role: row.role as LibraryRole, priceRegion: (lib.price_region as string | null) ?? null }] : [];
   });
 
-  const cookieStore = await cookies();
   const savedId = cookieStore.get(CURRENT_LIBRARY_COOKIE)?.value;
   const current = libraries.find((l) => l.id === savedId) ?? libraries[0] ?? null;
 

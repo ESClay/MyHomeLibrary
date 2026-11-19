@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookmarkPlus, CheckSquare, LayoutGrid, List, Rows3, Search, SlidersHorizontal, X } from "lucide-react";
+import { BookmarkPlus, CheckSquare, LayoutGrid, List, Loader2, Rows3, Search, SlidersHorizontal, X } from "lucide-react";
 import { BookGrid, BookList, type ViewMode } from "@/components/book-grid";
 import { AssignSheet } from "@/components/assign-sheet";
 import { NEW_SHELF, ShelfFormSheet } from "@/components/shelf-form";
@@ -23,12 +23,12 @@ import {
 import {
   LOAN_FILTERS,
   LOAN_FILTER_LABEL,
-  PAGE_SIZE,
   SORTS,
   SORT_LABEL,
   activeFilterCount,
   defaultDir,
   libraryHref,
+  paramsToRaw,
   type LibraryItem,
   type LibraryParams,
   type LoanFilter,
@@ -37,6 +37,7 @@ import {
 import type { LibraryRole } from "@/lib/library";
 import { rulesFromParams } from "@/lib/shelves/rules";
 import { updateShelf } from "@/app/(app)/shelves/actions";
+import { loadLibraryPage } from "./actions";
 import { cn } from "@/lib/utils";
 
 export type { ViewMode };
@@ -50,8 +51,14 @@ function saveView(view: ViewMode) {
   }
 }
 
+/** Start loading the next page this far before the end of the list. */
+const LOAD_AHEAD = "800px";
+
+type Feed = { sig: string; extra: LibraryItem[]; hasMore: boolean; status: "idle" | "loading" | "error" };
+
 export function LibraryBrowser({
-  items,
+  items: firstPage,
+  hasMore: firstHasMore,
   total,
   librarySize,
   params,
@@ -62,7 +69,9 @@ export function LibraryBrowser({
   role,
   editShelf,
 }: {
+  /** The first page of matches; later pages are fetched as the person scrolls. */
   items: LibraryItem[];
+  hasMore: boolean;
   total: number;
   librarySize: number;
   params: LibraryParams;
@@ -89,6 +98,48 @@ export function LibraryBrowser({
   const [ruleError, setRuleError] = useState<string | null>(null);
   const hasRules = filters > 0 || !!params.q;
 
+  // Pages after the first. Whatever the server sends (new filters, sort or search) starts the list again from its first page.
+  const sig = `${JSON.stringify(paramsToRaw(params))}|${total}|${firstPage.map((i) => i.id).join(",")}`;
+  const [feed, setFeed] = useState<Feed>({ sig, extra: [], hasMore: firstHasMore, status: "idle" });
+  if (feed.sig !== sig) setFeed({ sig, extra: [], hasMore: firstHasMore, status: "idle" });
+  const items = feed.extra.length ? [...firstPage, ...feed.extra] : firstPage;
+  const sentinel = useRef<HTMLDivElement>(null);
+  const inFlight = useRef(false);
+  const latest = useRef({ sig, count: items.length, params });
+  useEffect(() => {
+    latest.current = { sig, count: items.length, params };
+  });
+
+  const loadMore = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    const asked = latest.current;
+    setFeed((f) => (f.sig === asked.sig ? { ...f, status: "loading" } : f));
+    let res: Awaited<ReturnType<typeof loadLibraryPage>>;
+    try {
+      res = await loadLibraryPage({ libraryId, params: asked.params, offset: asked.count });
+    } catch {
+      res = { ok: false, error: "Could not load more books." };
+    }
+    inFlight.current = false;
+    setFeed((f) => {
+      if (f.sig !== asked.sig) return f; // The filters changed while this was loading: drop it.
+      if (!res.ok) return { ...f, status: "error" };
+      const seen = new Set([...firstPage, ...f.extra].map((i) => i.id));
+      return { ...f, extra: [...f.extra, ...res.items.filter((i) => !seen.has(i.id))], hasMore: res.hasMore, status: "idle" };
+    });
+  }, [libraryId, firstPage]);
+
+  // Watches the end of the list. Re-created after each page so a sentinel that is still in view fires again.
+  const canObserve = feed.hasMore && feed.status === "idle";
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!canObserve || !el) return;
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && void loadMore(), { rootMargin: `0px 0px ${LOAD_AHEAD} 0px` });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [canObserve, items.length, loadMore]);
+
   // Keeps the "editing a shelf's rules" mode across every filter change.
   const hrefFor = (o: Partial<LibraryParams> = {}) => {
     const h = libraryHref(params, o);
@@ -97,7 +148,7 @@ export function LibraryBrowser({
 
   function go(overrides: Partial<LibraryParams>) {
     // Changing a filter or the sort starts again from the first page.
-    startTransition(() => router.replace(hrefFor({ limit: PAGE_SIZE, ...overrides }), { scroll: false }));
+    startTransition(() => router.replace(hrefFor(overrides), { scroll: false }));
   }
 
   const toggle = (id: string) =>
@@ -128,7 +179,7 @@ export function LibraryBrowser({
     if (q === lastPushed.current) return;
     const t = setTimeout(() => {
       lastPushed.current = q;
-      startTransition(() => router.replace(hrefFor({ q: q.trim(), limit: PAGE_SIZE }), { scroll: false }));
+      startTransition(() => router.replace(hrefFor({ q: q.trim() }), { scroll: false }));
     }, 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,7 +194,6 @@ export function LibraryBrowser({
     loan: null,
     rating: null,
     q: "",
-    limit: PAGE_SIZE,
   });
 
   return (
@@ -355,13 +405,23 @@ export function LibraryBrowser({
         <BookList items={items} pending={pending} selection={selection} />
       )}
 
-      {total > items.length && (
-        <div className="flex justify-center pt-2">
-          <Button asChild variant="outline" size="lg">
-            <Link href={hrefFor({ limit: params.limit + PAGE_SIZE })} scroll={false}>
-              Show {Math.min(PAGE_SIZE, total - items.length)} more
-            </Link>
-          </Button>
+      {items.length > 0 && (
+        <div className="flex min-h-12 flex-col items-center justify-center gap-2 pt-2 text-sm text-muted-foreground">
+          {feed.hasMore && <div ref={sentinel} aria-hidden className="h-px w-full" />}
+          {feed.status === "loading" && (
+            <p role="status" className="flex items-center gap-2">
+              <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden /> Loading more books
+            </p>
+          )}
+          {feed.status === "error" && (
+            <div role="alert" className="flex items-center gap-3">
+              <span>Could not load more books.</span>
+              <Button type="button" variant="outline" size="sm" onClick={() => setFeed((f) => ({ ...f, status: "idle" }))}>
+                Try again
+              </Button>
+            </div>
+          )}
+          {!feed.hasMore && total > firstPage.length && <p>That is all {total} books.</p>}
         </div>
       )}
 
