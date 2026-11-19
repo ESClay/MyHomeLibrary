@@ -1,9 +1,9 @@
 -- library_page: the SQL filter, sort and paging behind the library list and the shelves. Run with `npx supabase test db`.
--- The fixture (13 books) and every expected order below mirror src/lib/books/library-fixture.ts, which the vitest
+-- The fixture (23 books) and every expected order below mirror src/lib/books/library-fixture.ts, which the vitest
 -- suite checks against the JS reference (applyLibraryQuery). Book numbers n are the last digits of the book id.
 -- Fixtures: alice owns the library, bob is an editor, carol a viewer, eve belongs to nothing. All rolled back.
 begin;
-select plan(70);
+select plan(71);
 
 insert into auth.users (id, aud, role, email) values
   ('a0000000-0000-0000-0000-000000000001', 'authenticated', 'authenticated', 'alice@example.com'),
@@ -29,7 +29,17 @@ insert into public.books (id, library_id, title, authors, series_name, series_po
   ('30000000-0000-0000-0000-000000000010', '10000000-0000-0000-0000-0000000000f0', 'Twin Title', '{"Zed Zimmer"}', 'Saga', null, 'owned', 3, '2026-01-10T10:00:00Z'),
   ('30000000-0000-0000-0000-000000000011', '10000000-0000-0000-0000-0000000000f0', 'twin title', '{"Zed Zimmer"}', 'Saga', null, 'owned', 3, '2026-01-10T10:00:00Z'),
   ('30000000-0000-0000-0000-000000000012', '10000000-0000-0000-0000-0000000000f0', 'The Zebra', '{"Zora Neale"}', null, null, 'owned', 5, '2026-01-11T10:00:00Z'),
-  ('30000000-0000-0000-0000-000000000013', '10000000-0000-0000-0000-0000000000f0', '100% Pure', '{"Pat Percent"}', null, null, 'owned', null, '2026-01-12T10:00:00Z');
+  ('30000000-0000-0000-0000-000000000013', '10000000-0000-0000-0000-0000000000f0', '100% Pure', '{"Pat Percent"}', null, null, 'owned', null, '2026-01-12T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000024', '10000000-0000-0000-0000-0000000000f0', 'Mistborn', '{"Sanderson, Brandon"}', 'Mistborn', 1, 'owned', null, '2026-01-13T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000025', '10000000-0000-0000-0000-0000000000f0', 'The Way of Kings', '{"Sanderson, Brandon"}', 'Stormlight', 1, 'owned', null, '2026-01-14T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000026', '10000000-0000-0000-0000-0000000000f0', 'Edgedancer', '{"Sanderson, Brandon"}', 'Stormlight', 2.5, 'owned', null, '2026-01-15T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000027', '10000000-0000-0000-0000-0000000000f0', 'Words of Radiance', '{"Sanderson, Brandon"}', 'Stormlight', 2, 'owned', null, '2026-01-16T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000028', '10000000-0000-0000-0000-0000000000f0', 'Elantris', '{"Sanderson, Brandon"}', null, null, 'owned', null, '2026-01-17T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000029', '10000000-0000-0000-0000-0000000000f0', 'Moral Sentiments', '{"Smith, Adam"}', null, null, 'owned', null, '2026-01-18T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000030', '10000000-0000-0000-0000-0000000000f0', 'NW', '{"Smith, Zadie"}', null, null, 'owned', null, '2026-01-19T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000031', '10000000-0000-0000-0000-0000000000f0', 'Wealth of Nations', '{"Smith, Adam"}', null, null, 'owned', null, '2026-01-20T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000032', '10000000-0000-0000-0000-0000000000f0', 'On Beauty', '{"Smith, Zadie"}', null, null, 'owned', null, '2026-01-21T10:00:00Z'),
+  ('30000000-0000-0000-0000-000000000033', '10000000-0000-0000-0000-0000000000f0', 'Mistborn Secret History', '{"Sanderson, Brandon"}', 'Mistborn', null, 'owned', null, '2026-01-22T10:00:00Z');
 
 insert into public.copies (id, book_id, format, purchase_price) values
   ('40000000-0000-0000-0000-000000000101', '30000000-0000-0000-0000-000000000001', 'hardcover', 12.5),
@@ -81,7 +91,7 @@ $$;
 create function pg_temp.nums(
   p_terms text[] default null, p_my text default null, p_partner text default null, p_format text default null,
   p_own text default null, p_series text default null, p_loan text default null, p_rating text default null,
-  p_sort text default 'added', p_dir text default null, p_offset int default 0, p_limit int default 48,
+  p_sort text default null, p_dir text default null, p_offset int default 0, p_limit int default 48,
   p_book_ids uuid[] default null, p_library uuid default '10000000-0000-0000-0000-0000000000f0'
 ) returns int[] language sql as $$
   select coalesce(array_agg(n order by ord), '{}'::int[]) from (
@@ -106,33 +116,34 @@ select ok((select sort_author is null from public.books where id = '30000000-000
 -- ---------------------------------------------------------------- filters and sorts, as alice
 select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
 
-select is(pg_temp.nums(), array[13, 12, 10, 11, 9, 8, 7, 6, 5, 4, 3, 2, 1]::int[],
-  'default sort is newest first, title then id on a tie');
-select is(pg_temp.nums(p_sort => 'title'), array[13, 7, 5, 6, 9, 3, 2, 1, 8, 4, 10, 11, 12]::int[],
+select is(pg_temp.nums(), array[5, 6, 3, 4, 8, 9, 12, 13, 24, 33, 25, 27, 26, 28, 29, 31, 30, 32, 2, 1, 10, 11, 7]::int[],
+  'default sort is author ascending');
+select is(pg_temp.nums(p_sort => 'title'), array[13, 7, 5, 6, 9, 3, 26, 28, 2, 1, 24, 33, 29, 30, 32, 8, 4, 10, 11, 25, 31, 27, 12]::int[],
   'title ascending: articles ignored, numbers numeric, case ignored, id breaks the tie');
-select is(pg_temp.nums(p_sort => 'title', p_dir => 'desc'), array[12, 10, 11, 4, 8, 1, 2, 3, 9, 6, 5, 7, 13]::int[],
+select is(pg_temp.nums(p_sort => 'title', p_dir => 'desc'), array[12, 27, 31, 25, 10, 11, 4, 8, 32, 30, 29, 33, 24, 1, 2, 28, 26, 3, 9, 6, 5, 7, 13]::int[],
   'title descending');
-select is(pg_temp.nums(p_sort => 'author'), array[5, 6, 3, 8, 4, 9, 12, 13, 2, 1, 10, 11, 7]::int[],
-  'author ascending: last name, comma form, missing author last');
-select is(pg_temp.nums(p_sort => 'author', p_dir => 'desc'), array[7, 10, 11, 2, 1, 13, 12, 9, 8, 4, 3, 5, 6]::int[],
-  'author descending puts a missing author first');
-select is(pg_temp.nums(p_sort => 'series'), array[1, 2, 8, 5, 6, 10, 11, 13, 7, 9, 3, 4, 12]::int[],
+select is(pg_temp.nums(p_sort => 'author'), array[5, 6, 3, 4, 8, 9, 12, 13, 24, 33, 25, 27, 26, 28, 29, 31, 30, 32, 2, 1, 10, 11, 7]::int[],
+  'author ascending: last name, then full name, then series in reading order (novella 2.5, null position, standalone last), missing author last');
+select is(pg_temp.nums(p_sort => 'not-a-sort'), pg_temp.nums(p_sort => 'author'), 'an unknown sort falls back to author');
+select is(pg_temp.nums(p_sort => 'author', p_dir => 'desc'), array[7, 10, 11, 1, 2, 30, 32, 29, 31, 24, 33, 25, 27, 26, 28, 13, 12, 9, 8, 4, 3, 5, 6]::int[],
+  'author descending flips last and full name only (series order stays ascending), missing author first');
+select is(pg_temp.nums(p_sort => 'series'), array[1, 2, 24, 33, 8, 5, 6, 10, 11, 25, 27, 26, 13, 7, 9, 3, 28, 29, 30, 32, 4, 31, 12]::int[],
   'series ascending: no series last, then position with nulls last');
-select is(pg_temp.nums(p_sort => 'series', p_dir => 'desc'), array[6, 5, 8, 10, 11, 2, 1, 13, 7, 9, 3, 4, 12]::int[],
+select is(pg_temp.nums(p_sort => 'series', p_dir => 'desc'), array[26, 27, 25, 6, 5, 8, 10, 11, 24, 33, 2, 1, 13, 7, 9, 3, 28, 29, 30, 32, 4, 31, 12]::int[],
   'series descending keeps no series last');
-select is(pg_temp.nums(p_sort => 'added', p_dir => 'asc'), array[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]::int[],
+select is(pg_temp.nums(p_sort => 'added', p_dir => 'asc'), array[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]::int[],
   'date added ascending');
-select is(pg_temp.nums(p_sort => 'myrating'), array[1, 11, 2, 8, 7, 9, 13, 5, 6, 3, 4, 10, 12]::int[],
+select is(pg_temp.nums(p_sort => 'myrating'), array[1, 11, 2, 8, 7, 9, 13, 5, 6, 3, 26, 28, 24, 33, 29, 30, 32, 4, 10, 25, 31, 27, 12]::int[],
   'my rating descending: unrated last');
-select is(pg_temp.nums(p_sort => 'myrating', p_dir => 'asc'), array[9, 7, 8, 2, 1, 11, 13, 5, 6, 3, 4, 10, 12]::int[],
+select is(pg_temp.nums(p_sort => 'myrating', p_dir => 'asc'), array[9, 7, 8, 2, 1, 11, 13, 5, 6, 3, 26, 28, 24, 33, 29, 30, 32, 4, 10, 25, 31, 27, 12]::int[],
   'my rating ascending: unrated still last');
-select is(pg_temp.nums(p_sort => 'rating'), array[12, 1, 2, 5, 6, 4, 9, 10, 11, 7, 13, 3, 8]::int[],
+select is(pg_temp.nums(p_sort => 'rating'), array[12, 1, 2, 5, 6, 4, 9, 10, 11, 7, 13, 3, 26, 28, 24, 33, 29, 30, 32, 8, 25, 31, 27]::int[],
   'public rating descending: unrated last');
-select is(pg_temp.nums(p_sort => 'rating', p_dir => 'asc'), array[7, 9, 10, 11, 4, 5, 6, 2, 1, 12, 13, 3, 8]::int[],
+select is(pg_temp.nums(p_sort => 'rating', p_dir => 'asc'), array[7, 9, 10, 11, 4, 5, 6, 2, 1, 12, 13, 3, 26, 28, 24, 33, 29, 30, 32, 8, 25, 31, 27]::int[],
   'public rating ascending: unrated still last');
-select is(pg_temp.nums(p_sort => 'price'), array[7, 1, 10, 12, 2, 4, 8, 13, 5, 6, 9, 3, 11]::int[],
+select is(pg_temp.nums(p_sort => 'price'), array[7, 1, 10, 12, 2, 4, 8, 13, 5, 6, 9, 3, 26, 28, 24, 33, 29, 30, 32, 11, 25, 31, 27]::int[],
   'price descending: sum of copies, none last');
-select is(pg_temp.nums(p_sort => 'price', p_dir => 'asc'), array[8, 4, 2, 10, 12, 1, 7, 13, 5, 6, 9, 3, 11]::int[],
+select is(pg_temp.nums(p_sort => 'price', p_dir => 'asc'), array[8, 4, 2, 10, 12, 1, 7, 13, 5, 6, 9, 3, 26, 28, 24, 33, 29, 30, 32, 11, 25, 31, 27]::int[],
   'price ascending: none still last');
 select is(pg_temp.nums(p_terms => array['eclair', 'etudes'], p_sort => 'title'), array[3]::int[],
   'search ignores accents and case');
@@ -152,7 +163,7 @@ select is(pg_temp.nums(p_my => 'read', p_sort => 'title'), array[1, 8, 11]::int[
   'my status read');
 select is(pg_temp.nums(p_my => 'want', p_sort => 'title'), array[9, 3]::int[],
   'my status want');
-select is(pg_temp.nums(p_my => 'none', p_sort => 'title'), array[13, 5, 6, 4, 10, 12]::int[],
+select is(pg_temp.nums(p_my => 'none', p_sort => 'title'), array[13, 5, 6, 26, 28, 24, 33, 29, 30, 32, 4, 10, 25, 31, 27, 12]::int[],
   'my status none: no row at all');
 select is(pg_temp.nums(p_partner => 'reading', p_sort => 'title'), array[2, 8]::int[],
   'partner reading');
@@ -164,7 +175,7 @@ select is(pg_temp.nums(p_format => 'paperback', p_sort => 'title'), array[2, 4, 
   'format paperback');
 select is(pg_temp.nums(p_own => 'wishlist', p_sort => 'title'), array[5, 6]::int[],
   'ownership wishlist');
-select is(pg_temp.nums(p_own => 'owned', p_sort => 'title'), array[13, 7, 3, 2, 1, 8, 4, 10, 11, 12]::int[],
+select is(pg_temp.nums(p_own => 'owned', p_sort => 'title'), array[13, 7, 3, 26, 28, 2, 1, 24, 33, 29, 30, 32, 8, 4, 10, 11, 25, 31, 27, 12]::int[],
   'ownership owned');
 select is(pg_temp.nums(p_series => 'Saga', p_sort => 'series'), array[8, 5, 6, 10, 11]::int[],
   'series name');
@@ -178,20 +189,20 @@ select is(pg_temp.nums(p_rating => '4', p_sort => 'title'), array[2, 1, 11]::int
   'rating at least 4');
 select is(pg_temp.nums(p_rating => '3.5', p_sort => 'title'), array[2, 1, 8, 11]::int[],
   'rating at least 3.5');
-select is(pg_temp.nums(p_rating => 'unrated', p_sort => 'title'), array[13, 5, 6, 3, 4, 10, 12]::int[],
+select is(pg_temp.nums(p_rating => 'unrated', p_sort => 'title'), array[13, 5, 6, 3, 26, 28, 24, 33, 29, 30, 32, 4, 10, 25, 31, 27, 12]::int[],
   'rating unrated: null or no row');
 select is(pg_temp.nums(p_my => 'read', p_own => 'owned', p_sort => 'title', p_dir => 'desc'), array[11, 8, 1]::int[],
   'filters combine');
 
 -- ---------------------------------------------------------------- paging
 select is(pg_temp.nums(p_sort => 'title', p_limit => 5), array[13, 7, 5, 6, 9]::int[], 'limit returns the first rows');
-select is(pg_temp.nums(p_sort => 'title', p_limit => 5, p_offset => 5), array[3, 2, 1, 8, 4]::int[], 'offset starts after them');
-select is(pg_temp.nums(p_sort => 'title', p_limit => 5, p_offset => 10), array[10, 11, 12]::int[], 'the last page is short');
-select is(pg_temp.nums(p_sort => 'title', p_limit => 5, p_offset => 13), array[]::int[], 'an offset past the end is empty');
-select is((select total from public.library_page('10000000-0000-0000-0000-0000000000f0', p_limit => 5) limit 1), 13::bigint, 'total counts every match, not the page');
+select is(pg_temp.nums(p_sort => 'title', p_limit => 5, p_offset => 5), array[3, 26, 28, 2, 1]::int[], 'offset starts after them');
+select is(pg_temp.nums(p_sort => 'title', p_limit => 5, p_offset => 20), array[31, 27, 12]::int[], 'the last page is short');
+select is(pg_temp.nums(p_sort => 'title', p_limit => 5, p_offset => 23), array[]::int[], 'an offset past the end is empty');
+select is((select total from public.library_page('10000000-0000-0000-0000-0000000000f0', p_limit => 5) limit 1), 23::bigint, 'total counts every match, not the page');
 select is((select total from public.library_page('10000000-0000-0000-0000-0000000000f0', p_terms => array['saga'], p_limit => 2, p_offset => 2) limit 1), 5::bigint, 'total follows the filters');
-select is(pg_temp.nums(p_sort => 'rating', p_limit => 4) || pg_temp.nums(p_sort => 'rating', p_limit => 4, p_offset => 4) || pg_temp.nums(p_sort => 'rating', p_limit => 5, p_offset => 8),
-  array[12, 1, 2, 5, 6, 4, 9, 10, 11, 7, 13, 3, 8]::int[], 'pages of a tied sort join into the full order with no gap or repeat');
+select is(pg_temp.nums(p_sort => 'rating', p_limit => 4) || pg_temp.nums(p_sort => 'rating', p_limit => 4, p_offset => 4) || pg_temp.nums(p_sort => 'rating', p_limit => 20, p_offset => 8),
+  array[12, 1, 2, 5, 6, 4, 9, 10, 11, 7, 13, 3, 26, 28, 24, 33, 29, 30, 32, 8, 25, 31, 27]::int[], 'pages of a tied sort join into the full order with no gap or repeat');
 
 -- ---------------------------------------------------------------- restricted to a set of books
 select is(pg_temp.nums(p_sort => 'title', p_book_ids => array['30000000-0000-0000-0000-000000000012', '30000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000007', '99999999-9999-9999-9999-999999999999']::uuid[]),
@@ -199,17 +210,17 @@ select is(pg_temp.nums(p_sort => 'title', p_book_ids => array['30000000-0000-000
 select is(pg_temp.nums(p_my => 'read', p_sort => 'title', p_book_ids => array['30000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002']::uuid[]), array[1]::int[], 'p_book_ids combines with filters');
 
 -- ---------------------------------------------------------------- series names
-select is((select array_agg(s order by s) from public.library_series_names('10000000-0000-0000-0000-0000000000f0') s), array['Middle-earth', 'Saga']::text[], 'library_series_names lists each series once');
+select is((select array_agg(s order by s) from public.library_series_names('10000000-0000-0000-0000-0000000000f0') s), array['Middle-earth', 'Mistborn', 'Saga', 'Stormlight']::text[], 'library_series_names lists each series once');
 
 -- ---------------------------------------------------------------- "me" is whoever calls
 select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
 select is(pg_temp.nums(p_my => 'reading', p_sort => 'title'), array[2, 8]::int[], 'my status is the caller''s: bob');
 select is(pg_temp.nums(p_partner => 'reading', p_sort => 'title'), array[2]::int[], 'partner status looks at everyone else: alice reads n2');
-select is(pg_temp.nums(p_my => 'none', p_sort => 'title'), array[13, 7, 5, 6, 9, 3, 10, 11, 12]::int[], 'bob has no status on these');
+select is(pg_temp.nums(p_my => 'none', p_sort => 'title'), array[13, 7, 5, 6, 9, 3, 26, 28, 24, 33, 29, 30, 32, 10, 11, 25, 31, 27, 12]::int[], 'bob has no status on these');
 select is(pg_temp.nums(p_rating => 'unrated', p_sort => 'title'), pg_temp.nums(p_sort => 'title'), 'bob has rated nothing');
 
 select pg_temp.act_as('c0000000-0000-0000-0000-000000000003');
-select is(array_length(pg_temp.nums(), 1), 13, 'a viewer sees the whole library');
+select is(array_length(pg_temp.nums(), 1), 23, 'a viewer sees the whole library');
 select is(pg_temp.nums(p_my => 'none', p_sort => 'title'), pg_temp.nums(p_sort => 'title'), 'carol has no statuses at all');
 
 -- ---------------------------------------------------------------- RLS: a non-member sees nothing

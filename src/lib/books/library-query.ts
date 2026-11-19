@@ -25,7 +25,7 @@ export const LOAN_FILTERS = ["out", "overdue", "borrowed"] as const;
 export type LoanFilter = (typeof LOAN_FILTERS)[number];
 export const LOAN_FILTER_LABEL: Record<LoanFilter, string> = { out: "On loan", overdue: "Overdue", borrowed: "Borrowed" };
 
-export const SORTS = ["added", "title", "author", "series", "myrating", "rating", "price"] as const;
+export const SORTS = ["author", "added", "title", "series", "myrating", "rating", "price"] as const;
 export type Sort = (typeof SORTS)[number];
 export const SORT_LABEL: Record<Sort, string> = {
   added: "Date added",
@@ -49,6 +49,9 @@ const DEFAULT_DIR: Record<Sort, "asc" | "desc"> = {
 export function defaultDir(sort: Sort): "asc" | "desc" {
   return DEFAULT_DIR[sort];
 }
+
+/** What the library sorts by when the URL has no `sort`. */
+export const DEFAULT_SORT: Sort = "author";
 
 export const PAGE_SIZE = 48;
 
@@ -82,7 +85,7 @@ function oneOf<T extends string>(v: string | undefined, allowed: readonly T[]): 
 
 /** Reads and validates library URL params; unknown values fall back to defaults. An old `?limit=` is ignored (the list pages itself). */
 export function parseLibraryParams(raw: Raw): LibraryParams {
-  const sort = oneOf(one(raw, "sort"), SORTS) ?? "added";
+  const sort = oneOf(one(raw, "sort"), SORTS) ?? DEFAULT_SORT;
   const dir = oneOf(one(raw, "dir"), ["asc", "desc"] as const) ?? DEFAULT_DIR[sort];
   const ratingRaw = one(raw, "rating");
   const ratingNum = ratingRaw ? Number(ratingRaw) : NaN;
@@ -116,7 +119,7 @@ export function paramsToRaw(p: LibraryParams): Record<string, string> {
   if (p.series) raw.series = p.series;
   if (p.loan) raw.loan = p.loan;
   if (p.rating !== null) raw.rating = String(p.rating);
-  if (p.sort !== "added") raw.sort = p.sort;
+  if (p.sort !== DEFAULT_SORT) raw.sort = p.sort;
   if (p.dir !== DEFAULT_DIR[p.sort]) raw.dir = p.dir;
   return raw;
 }
@@ -207,9 +210,21 @@ function compareByKey(a: LibraryItem, b: LibraryItem, sort: Sort, dir: "asc" | "
   switch (sort) {
     case "title":
       return sign * byTitle();
-    case "author":
+    case "author": {
+      // Last name, then full name (both follow the direction); then series before no series, series name, and position,
+      // always ascending; then title. A missing author is U+FFFF in both author keys, as in SQL (NULL).
       r = collator.compare(lastName(a.authors[0]), lastName(b.authors[0]));
-      return r !== 0 ? sign * r : byTitle();
+      if (r !== 0) return sign * r;
+      r = collator.compare(a.authors[0] || "￿", b.authors[0] || "￿");
+      if (r !== 0) return sign * r;
+      if (!a.seriesName !== !b.seriesName) return a.seriesName ? -1 : 1;
+      if (a.seriesName && b.seriesName) {
+        r = collator.compare(a.seriesName, b.seriesName);
+        if (r !== 0) return r;
+      }
+      r = numeric(a.seriesPosition, b.seriesPosition, "asc");
+      return r !== 0 ? r : byTitle();
+    }
     case "series": {
       if (!a.seriesName && !b.seriesName) return byTitle();
       if (!a.seriesName) return 1;

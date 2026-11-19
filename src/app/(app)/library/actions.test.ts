@@ -48,7 +48,7 @@ describe("loadLibraryPage", () => {
 
   it("re-parses the params, so a tampered value falls back to a default", async () => {
     await loadLibraryPage({ libraryId: "lib-1", params: { ...params, sort: "nope" as never }, offset: 0 });
-    expect(load.mock.calls[0][2]).toMatchObject({ sort: "added" });
+    expect(load.mock.calls[0][2]).toMatchObject({ sort: "author" });
   });
 
   it("refuses a library the person does not belong to, without reading anything", async () => {

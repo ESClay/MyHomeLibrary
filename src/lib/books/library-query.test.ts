@@ -4,6 +4,8 @@ import {
   applyLibraryQuery,
   libraryHref,
   parseLibraryParams,
+  paramsToRaw,
+  SORTS,
   queryTerms,
   compareItems,
   type LibraryItem,
@@ -41,7 +43,7 @@ const q = (raw: Record<string, string>) => applyLibraryQuery(items, parseLibrary
 describe("parseLibraryParams", () => {
   it("falls back to defaults for junk", () => {
     const p = parseLibraryParams({ sort: "nope", my: "zzz", limit: "5", rating: "9", format: "vinyl" });
-    expect(p).toMatchObject({ sort: "added", dir: "desc", my: null, rating: null, format: null });
+    expect(p).toMatchObject({ sort: "author", dir: "asc", my: null, rating: null, format: null });
   });
   it("ignores an old ?limit=", () => {
     const p = parseLibraryParams({ limit: "96" });
@@ -92,6 +94,34 @@ describe("sorting", () => {
   });
   it("sorts by author last name", () => {
     expect(ids(q({ sort: "author" }))).toEqual(["3", "4", "1", "2"]);
+  });
+  it("defaults to author, with no sort or dir in the URL", () => {
+    expect(parseLibraryParams({})).toMatchObject({ sort: "author", dir: "asc" });
+    expect(ids(applyLibraryQuery(items, parseLibraryParams({})))).toEqual(ids(q({ sort: "author" })));
+    expect(paramsToRaw(parseLibraryParams({}))).toEqual({});
+    expect(paramsToRaw(parseLibraryParams({ sort: "added" }))).toEqual({ sort: "added" });
+    expect(SORTS[0]).toBe("author");
+  });
+  describe("author sort order", () => {
+    const nums = (raw: Record<string, string>) =>
+      applyLibraryQuery(FIXTURE_ITEMS, parseLibraryParams(raw)).map((i) => Number(i.id.slice(-12)));
+    const sanderson = [24, 33, 25, 27, 26, 28];
+    it("keeps an author's series together in reading order, standalones last", () => {
+      const asc = nums({ sort: "author" });
+      // Mistborn (1, then no position), Stormlight 1, 2, 2.5 (the novella), then the standalone
+      expect(asc.filter((n) => sanderson.includes(n))).toEqual(sanderson);
+    });
+    it("keeps two authors who share a last name apart", () => {
+      // Adam Smith's titles sit on both sides of Zadie Smith's, so only the full name keeps them apart
+      expect(nums({ sort: "author" }).filter((n) => n >= 29 && n <= 32)).toEqual([29, 31, 30, 32]);
+    });
+    it("descending flips only the author keys, the series order stays ascending", () => {
+      const desc = nums({ sort: "author", dir: "desc" });
+      expect(desc.filter((n) => sanderson.includes(n))).toEqual(sanderson);
+      expect(desc.filter((n) => n >= 29 && n <= 32)).toEqual([30, 32, 29, 31]);
+      expect(desc[0]).toBe(7); // no author first
+      expect(nums({ sort: "author" }).at(-1)).toBe(7); // and last ascending
+    });
   });
   it("sorts by series order with standalone books last", () => {
     expect(ids(q({ sort: "series" }))).toEqual(["1", "2", "3", "4"]);
