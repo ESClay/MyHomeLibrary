@@ -50,7 +50,7 @@ export function defaultDir(sort: Sort): "asc" | "desc" {
   return DEFAULT_DIR[sort];
 }
 
-/** What the library sorts by when the URL has no `sort`. */
+/** What the library sorts by when neither the URL nor the saved preference has a sort. */
 export const DEFAULT_SORT: Sort = "author";
 
 export const PAGE_SIZE = 48;
@@ -83,10 +83,19 @@ function oneOf<T extends string>(v: string | undefined, allowed: readonly T[]): 
   return v && (allowed as readonly string[]).includes(v) ? (v as T) : null;
 }
 
-/** Reads and validates library URL params; unknown values fall back to defaults. An old `?limit=` is ignored (the list pages itself). */
-export function parseLibraryParams(raw: Raw): LibraryParams {
-  const sort = oneOf(one(raw, "sort"), SORTS) ?? DEFAULT_SORT;
-  const dir = oneOf(one(raw, "dir"), ["asc", "desc"] as const) ?? DEFAULT_DIR[sort];
+/** A saved sort preference (from the profile), used when the URL names no valid sort. */
+export type SortFallback = { sort: Sort; dir: "asc" | "desc" };
+
+/**
+ * Reads and validates library URL params; unknown values fall back to defaults. An old `?limit=` is ignored (the list pages itself).
+ * The sort comes from the URL when it is valid, else from `fallback` (the saved preference), else DEFAULT_SORT. With a URL sort,
+ * `dir` is the URL's or that sort's default; with a fallback sort, it is the URL's `dir` if present, else the saved one.
+ */
+export function parseLibraryParams(raw: Raw, fallback?: SortFallback | null): LibraryParams {
+  const urlSort = oneOf(one(raw, "sort"), SORTS);
+  const urlDir = oneOf(one(raw, "dir"), ["asc", "desc"] as const);
+  const sort = urlSort ?? fallback?.sort ?? DEFAULT_SORT;
+  const dir = urlSort ? (urlDir ?? DEFAULT_DIR[sort]) : fallback ? (urlDir ?? fallback.dir) : (urlDir ?? DEFAULT_DIR[sort]);
   const ratingRaw = one(raw, "rating");
   const ratingNum = ratingRaw ? Number(ratingRaw) : NaN;
   return {
@@ -108,7 +117,10 @@ export function parseLibraryParams(raw: Raw): LibraryParams {
   };
 }
 
-/** Params as the raw string map the URL carries, defaults omitted. Parsing it back gives the same params. */
+/**
+ * Params as the raw string map the URL carries. Filters at their default are omitted, but `sort` and `dir` are always
+ * written: once the URL carries a sort it wins over the saved preference. Parsing it back gives the same params.
+ */
 export function paramsToRaw(p: LibraryParams): Record<string, string> {
   const raw: Record<string, string> = {};
   if (p.q) raw.q = p.q;
@@ -119,12 +131,12 @@ export function paramsToRaw(p: LibraryParams): Record<string, string> {
   if (p.series) raw.series = p.series;
   if (p.loan) raw.loan = p.loan;
   if (p.rating !== null) raw.rating = String(p.rating);
-  if (p.sort !== DEFAULT_SORT) raw.sort = p.sort;
-  if (p.dir !== DEFAULT_DIR[p.sort]) raw.dir = p.dir;
+  raw.sort = p.sort;
+  raw.dir = p.dir;
   return raw;
 }
 
-/** Serializes params for a URL, omitting defaults. `overrides` replace fields. */
+/** Serializes params for a URL (always with sort and direction). `overrides` replace fields. */
 export function libraryHref(params: LibraryParams, overrides: Partial<LibraryParams> = {}): string {
   const s = new URLSearchParams(paramsToRaw({ ...params, ...overrides })).toString();
   return s ? `/library?${s}` : "/library";

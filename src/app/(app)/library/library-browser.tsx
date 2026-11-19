@@ -37,7 +37,7 @@ import {
 import type { LibraryRole } from "@/lib/library";
 import { rulesFromParams } from "@/lib/shelves/rules";
 import { updateShelf } from "@/app/(app)/shelves/actions";
-import { loadLibraryPage } from "./actions";
+import { loadLibraryPage, saveLibrarySort } from "./actions";
 import { cn } from "@/lib/utils";
 
 export type { ViewMode };
@@ -331,7 +331,12 @@ export function LibraryBrowser({
           <NativeSelect
             aria-label="Sort by"
             value={params.sort}
-            onChange={(e) => go({ sort: e.target.value as Sort, dir: defaultDir(e.target.value as Sort) })}
+            onChange={(e) => {
+              const sort = e.target.value as Sort;
+              const dir = defaultDir(sort);
+              go({ sort, dir });
+              void saveLibrarySort({ sort, dir }).catch(() => {});
+            }}
             className="w-44 text-sm"
           >
             {SORTS.map((s) => (
@@ -346,7 +351,11 @@ export function LibraryBrowser({
           variant="outline"
           size="icon"
           aria-label={params.dir === "asc" ? "Ascending. Switch to descending" : "Descending. Switch to ascending"}
-          onClick={() => go({ dir: params.dir === "asc" ? "desc" : "asc" })}
+          onClick={() => {
+            const dir = params.dir === "asc" ? "desc" : "asc";
+            go({ dir });
+            void saveLibrarySort({ sort: params.sort, dir }).catch(() => {});
+          }}
         >
           <span aria-hidden className="text-lg leading-none">{params.dir === "asc" ? "↑" : "↓"}</span>
         </Button>

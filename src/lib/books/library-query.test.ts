@@ -40,6 +40,33 @@ const items: LibraryItem[] = [
 const ids = (list: LibraryItem[]) => list.map((i) => i.id);
 const q = (raw: Record<string, string>) => applyLibraryQuery(items, parseLibraryParams(raw));
 
+describe("saved sort fallback", () => {
+  const saved = { sort: "title", dir: "desc" } as const;
+  it("is used when the URL has no sort", () => {
+    expect(parseLibraryParams({}, saved)).toMatchObject({ sort: "title", dir: "desc" });
+    expect(parseLibraryParams({ sort: "nope" }, saved)).toMatchObject({ sort: "title", dir: "desc" });
+  });
+  it("takes the URL dir over the saved one when the sort comes from the fallback", () => {
+    expect(parseLibraryParams({ dir: "asc" }, saved)).toMatchObject({ sort: "title", dir: "asc" });
+  });
+  it("loses to a valid URL sort, which uses the URL dir or its own default", () => {
+    expect(parseLibraryParams({ sort: "price" }, saved)).toMatchObject({ sort: "price", dir: "desc" });
+    expect(parseLibraryParams({ sort: "series" }, saved)).toMatchObject({ sort: "series", dir: "asc" });
+    expect(parseLibraryParams({ sort: "series", dir: "desc" }, saved)).toMatchObject({ sort: "series", dir: "desc" });
+  });
+  it("is ignored when null", () => {
+    expect(parseLibraryParams({}, null)).toMatchObject({ sort: "author", dir: "asc" });
+  });
+  it("round-trips through paramsToRaw, even against a different fallback", () => {
+    const p = parseLibraryParams({}, saved);
+    expect(paramsToRaw(p)).toMatchObject({ sort: "title", dir: "desc" });
+    expect(parseLibraryParams(paramsToRaw(p), { sort: "price", dir: "asc" })).toEqual(p);
+  });
+  it("does not count sort as a filter", () => {
+    expect(activeFilterCount(parseLibraryParams({}, saved))).toBe(0);
+  });
+});
+
 describe("parseLibraryParams", () => {
   it("falls back to defaults for junk", () => {
     const p = parseLibraryParams({ sort: "nope", my: "zzz", limit: "5", rating: "9", format: "vinyl" });
@@ -48,14 +75,14 @@ describe("parseLibraryParams", () => {
   it("ignores an old ?limit=", () => {
     const p = parseLibraryParams({ limit: "96" });
     expect(p).not.toHaveProperty("limit");
-    expect(libraryHref(p)).toBe("/library");
+    expect(libraryHref(p)).toBe("/library?sort=author&dir=asc");
   });
   it("keeps valid values and per-sort default direction", () => {
     const p = parseLibraryParams({ sort: "title", my: "none", rating: "unrated", limit: "96", series: "X" });
     expect(p).toMatchObject({ sort: "title", dir: "asc", my: "none", rating: "unrated", series: "X" });
   });
-  it("round-trips through libraryHref and omits defaults", () => {
-    expect(libraryHref(parseLibraryParams({}))).toBe("/library");
+  it("round-trips through libraryHref, which always carries sort and dir", () => {
+    expect(libraryHref(parseLibraryParams({}))).toBe("/library?sort=author&dir=asc");
     const p = parseLibraryParams({ q: "ring", sort: "price", dir: "asc", own: "wishlist", limit: "96" });
     expect(parseLibraryParams(Object.fromEntries(new URLSearchParams(libraryHref(p).split("?")[1])))).toEqual(p);
   });
@@ -98,8 +125,8 @@ describe("sorting", () => {
   it("defaults to author, with no sort or dir in the URL", () => {
     expect(parseLibraryParams({})).toMatchObject({ sort: "author", dir: "asc" });
     expect(ids(applyLibraryQuery(items, parseLibraryParams({})))).toEqual(ids(q({ sort: "author" })));
-    expect(paramsToRaw(parseLibraryParams({}))).toEqual({});
-    expect(paramsToRaw(parseLibraryParams({ sort: "added" }))).toEqual({ sort: "added" });
+    expect(paramsToRaw(parseLibraryParams({}))).toEqual({ sort: "author", dir: "asc" });
+    expect(paramsToRaw(parseLibraryParams({ sort: "added" }))).toEqual({ sort: "added", dir: "desc" });
     expect(SORTS[0]).toBe("author");
   });
   describe("author sort order", () => {
@@ -160,7 +187,7 @@ describe("loan filters", () => {
   it("ignores an unknown value and counts the filter as active", () => {
     expect(parseLibraryParams({ loan: "nonsense" }).loan).toBeNull();
     expect(activeFilterCount(parseLibraryParams({ loan: "out" }))).toBe(1);
-    expect(libraryHref(parseLibraryParams({ loan: "overdue" }))).toBe("/library?loan=overdue");
+    expect(libraryHref(parseLibraryParams({ loan: "overdue" }))).toBe("/library?loan=overdue&sort=author&dir=asc");
   });
 });
 

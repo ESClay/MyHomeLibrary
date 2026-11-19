@@ -3,10 +3,14 @@ import { PAGE_SIZE, parseLibraryParams, type LibraryItem } from "@/lib/books/lib
 
 const context = vi.fn();
 const load = vi.fn();
-vi.mock("@/lib/library", () => ({ getLibraryContext: () => context() }));
+const update = vi.fn();
+const eq = vi.fn();
+const from = vi.fn();
+vi.mock("@/lib/library", () => ({ getLibraryContext: () => context(), requireUser: async () => ({ id: "me" }) }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from }) }));
 vi.mock("@/lib/books/data", () => ({ loadLibraryPageItems: (...a: unknown[]) => load(...a) }));
 
-import { loadLibraryPage } from "./actions";
+import { loadLibraryPage, saveLibrarySort } from "./actions";
 
 const item = (n: number): LibraryItem => ({
   id: String(n).padStart(3, "0"),
@@ -28,6 +32,9 @@ const TOTAL = PAGE_SIZE * 2 + 5;
 const params = parseLibraryParams({ sort: "title", q: "book" });
 
 beforeEach(() => {
+  eq.mockReset().mockResolvedValue({ error: null });
+  update.mockReset().mockReturnValue({ eq });
+  from.mockReset().mockReturnValue({ update });
   context.mockResolvedValue({ user: { id: "me" }, libraries: [{ id: "lib-1" }] });
   load.mockReset().mockImplementation(async (_lib: string, _user: string, _p: unknown, opts: { offset: number; limit: number }) => ({
     items: Array.from({ length: Math.max(0, Math.min(opts.limit, TOTAL - opts.offset)) }, (_, i) => item(opts.offset + i + 1)),
@@ -62,5 +69,23 @@ describe("loadLibraryPage", () => {
     expect(load.mock.calls[0][3]).toEqual({ offset: 0, limit: PAGE_SIZE });
     load.mockRejectedValue(new Error("db down"));
     expect(await loadLibraryPage({ libraryId: "lib-1", params, offset: 0 })).toMatchObject({ ok: false });
+  });
+});
+
+describe("saveLibrarySort", () => {
+  it("updates only the caller's profile row", async () => {
+    expect(await saveLibrarySort({ sort: "title", dir: "desc" })).toEqual({ ok: true });
+    expect(from).toHaveBeenCalledWith("profiles");
+    expect(update).toHaveBeenCalledWith({ library_sort: "title", library_sort_dir: "desc" });
+    expect(eq).toHaveBeenCalledWith("id", "me");
+  });
+  it("rejects an unknown sort or direction without writing", async () => {
+    expect(await saveLibrarySort({ sort: "nope", dir: "asc" })).toMatchObject({ ok: false });
+    expect(await saveLibrarySort({ sort: "title", dir: "sideways" })).toMatchObject({ ok: false });
+    expect(update).not.toHaveBeenCalled();
+  });
+  it("reports a failed write", async () => {
+    eq.mockResolvedValue({ error: { message: "x" } });
+    expect(await saveLibrarySort({ sort: "title", dir: "asc" })).toMatchObject({ ok: false });
   });
 });
