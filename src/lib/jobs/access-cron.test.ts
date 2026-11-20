@@ -4,7 +4,8 @@ import { fakeSupabase } from "@/test/supabase-fake";
 
 const spies = vi.hoisted(() => ({
   generateSet: vi.fn(),
-  syncLibrarySeries: vi.fn(),
+  countSeriesWork: vi.fn(),
+  enqueueJob: vi.fn(),
   price: vi.fn(),
   requestPicks: vi.fn(),
 }));
@@ -16,7 +17,8 @@ vi.mock("@/lib/discover/recs", () => ({
   CapReached: class extends Error {},
   NotEnoughSignal: class extends Error {},
 }));
-vi.mock("@/lib/discover/series-sync", () => ({ syncLibrarySeries: spies.syncLibrarySeries }));
+vi.mock("@/lib/discover/series-sync", () => ({ countSeriesWork: spies.countSeriesWork }));
+vi.mock("./queue/enqueue", () => ({ enqueueJob: spies.enqueueJob }));
 vi.mock("@/lib/ai/recommend", () => ({ RecommendError: class extends Error {} }));
 vi.mock("@/lib/pricing/ebay", () => ({ getEbayClient: () => ({ price: spies.price }) }));
 vi.mock("./scan-cleanup", () => ({ cleanupScanBatch: vi.fn() }));
@@ -42,12 +44,13 @@ describe("series sync task", () => {
     ],
   });
 
-  it("syncs only libraries with a granted member", async () => {
-    spies.syncLibrarySeries.mockResolvedValue({ syncedSeries: 0, linkedBooks: 0, errors: [], remaining: 0, rateLimited: false });
+  it("queues a series lookup only for libraries with a granted member and work waiting", async () => {
+    spies.countSeriesWork.mockImplementation(async (_admin: unknown, id: string) => (id === "L3" ? 0 : 5));
+    spies.enqueueJob.mockResolvedValue({ job: {}, created: true });
     const { seriesSyncTask } = await import("./tasks");
     const out = await seriesSyncTask(fakeSupabase(tables()) as never)(ctx);
     expect(out.status).toBe("complete");
-    expect(spies.syncLibrarySeries.mock.calls.map((c) => c[1])).toEqual(["L1", "L3"]);
+    expect(spies.enqueueJob.mock.calls.map((c) => c[1])).toEqual([{ libraryId: "L1", userId: null, kind: "series_lookup" }]);
   });
 
   it("does nothing, and reads no libraries, when nobody has full access", async () => {
@@ -55,7 +58,7 @@ describe("series sync task", () => {
     const fake = fakeSupabase({ ...tables(), user_entitlements: [] });
     const out = await seriesSyncTask(fake as never)(ctx);
     expect(out.status).toBe("complete");
-    expect(spies.syncLibrarySeries).not.toHaveBeenCalled();
+    expect(spies.enqueueJob).not.toHaveBeenCalled();
     expect(fake.calls.some((c) => c.table === "libraries")).toBe(false);
   });
 });

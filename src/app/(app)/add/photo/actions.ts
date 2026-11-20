@@ -2,11 +2,16 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 import { authorizeBook, canEdit, fail, firstIssue, roleInLibrary, type ActionResult } from "@/lib/books/access";
 import { fullAccessDenied, hasFullAccess } from "@/lib/access";
 import { requireUser } from "@/lib/library";
+import { enqueueJob } from "@/lib/jobs/queue/enqueue";
+import { runJobsTick } from "@/lib/jobs/queue/tick";
+import { isOwnScanPath, MAX_BATCH_PHOTOS } from "@/lib/scan/batch";
 import { capMessage } from "@/lib/scan/photo";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { dailyScanStatus, SCANS_BUCKET } from "@/lib/scan/jobs";
 import { createClient } from "@/lib/supabase/server";
 
@@ -50,6 +55,70 @@ export async function startScan(
     .single();
   if (error || !data) return fail(error?.message ?? "Could not start reading that photo.");
   return { ok: true, jobId: data.id, remaining: status.remaining - 1 };
+}
+
+const batchSchema = z.object({
+  libraryId: z.string().uuid(),
+  photoPaths: z.array(z.string().max(200)).min(1, "Add at least one photo.").max(MAX_BATCH_PHOTOS, `Add up to ${MAX_BATCH_PHOTOS} photos at a time.`),
+});
+
+/**
+ * Queues uploaded photos as one background batch. Checks full access, that the person may edit the library, that every
+ * photo sits in their own folder, and that today's cap is not already used up. Then it creates the photo_scan job and
+ * one scan_jobs row per photo, and starts one worker tick at once. Photos beyond today's allowance wait for it.
+ * The model is called later, by the worker.
+ */
+export async function queuePhotoBatch(
+  input: z.input<typeof batchSchema>,
+): Promise<ActionResult<{ jobId: string; queued: number; waiting: number }> & { capReached?: boolean }> {
+  const parsed = batchSchema.safeParse(input);
+  if (!parsed.success) return fail(firstIssue(parsed.error));
+  const { libraryId } = parsed.data;
+  const photoPaths = [...new Set(parsed.data.photoPaths)];
+
+  const user = await requireUser();
+  const supabase = await createClient();
+  // Photo recognition calls Claude, so it is for people with full access only.
+  if (!(await hasFullAccess(supabase, user.id))) return fullAccessDenied();
+  const role = await roleInLibrary(libraryId, user.id);
+  if (!canEdit(role)) return fail(role ? "Only owners and editors can change the library." : "You are not a member of that library.");
+  if (!photoPaths.every((p) => isOwnScanPath(p, user.id, libraryId))) return fail("That photo is not in your folder.");
+
+  const status = await dailyScanStatus(supabase, user.id);
+  if (status.reached) return { ...fail(capMessage(status.cap)), capReached: true };
+
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return fail("Background reading is not set up on this server yet (SUPABASE_SERVICE_ROLE_KEY).");
+  }
+
+  // The job is held back until its photos are linked, so a tick cannot find it empty.
+  let jobId: string;
+  try {
+    const { job } = await enqueueJob(admin, { libraryId, userId: user.id, kind: "photo_scan", total: photoPaths.length, notBefore: Date.now() + 60 * 60_000 });
+    jobId = job.id;
+  } catch {
+    return fail("Could not queue those photos. Try again shortly.");
+  }
+  const { error } = await supabase.from("scan_jobs").insert(photoPaths.map((photo_path) => ({ library_id: libraryId, photo_path, job_id: jobId })));
+  if (error) {
+    await admin.from("jobs").delete().eq("id", jobId);
+    return fail("Could not queue those photos. Try again shortly.");
+  }
+  await admin.from("jobs").update({ not_before: null }).eq("id", jobId);
+
+  // Start work now rather than waiting for the next minute's tick; the claim is atomic, so a tick that overlaps is harmless.
+  after(async () => {
+    try {
+      await runJobsTick(admin);
+    } catch {
+      // the next tick picks the batch up
+    }
+  });
+  revalidatePath("/activity");
+  return { ok: true, jobId, queued: photoPaths.length, waiting: Math.max(0, photoPaths.length - status.remaining) };
 }
 
 /**

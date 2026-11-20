@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
-import { addCopy, createBook, type DuplicateInfo } from "@/app/(app)/books/actions";
+import { addCopy, createBook, updateExistingBook, type DuplicateInfo } from "@/app/(app)/books/actions";
 import {
   BookFields,
   CopyFields,
@@ -19,12 +19,14 @@ import {
 } from "@/components/book-forms";
 import { BorrowerPicker, borrowerChoice, emptyBorrower, type BorrowerOption, type BorrowerState } from "@/components/borrower-picker";
 import { CoverPicker } from "@/components/cover-picker";
+import { Cover } from "@/components/cover";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { RATING_SOURCE_LABEL, STATUSES, STATUS_LABEL, type Ownership, type Status } from "@/lib/books/constants";
 import type { BookMetadata } from "@/lib/metadata/types";
+import type { SeriesOption } from "@/lib/books/series-suggest";
 import { cn } from "@/lib/utils";
 
 export function ConfirmSheet({
@@ -33,6 +35,7 @@ export function ConfirmSheet({
   initialIsbn,
   borrowers,
   currency = null,
+  seriesOptions,
   onClose,
 }: {
   libraryId: string;
@@ -44,6 +47,8 @@ export function ConfirmSheet({
   borrowers?: BorrowerOption[];
   /** The library currency, for the price field. */
   currency?: string | null;
+  /** The library's series, for the series field's suggestions. */
+  seriesOptions?: SeriesOption[];
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -60,6 +65,7 @@ export function ConfirmSheet({
   const [showDetails, setShowDetails] = useState(manual);
   const [error, setError] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateInfo[] | null>(null);
+  const [replaceCover, setReplaceCover] = useState(false);
 
   const candidates = useMemo(
     () => (candidate?.covers ?? []).map((c) => ({ url: c.url, label: RATING_SOURCE_LABEL[c.source] ?? c.source })),
@@ -107,6 +113,24 @@ export function ConfirmSheet({
     });
   }
 
+  function updateExisting(bookId: string) {
+    setError(null);
+    startTransition(async () => {
+      const p = payload(true);
+      const res = await updateExistingBook({
+        bookId,
+        book: p.book,
+        provider: p.provider,
+        replaceCover: replaceCover && !!cover,
+        copy: ownership === "owned" ? copyDraftToInput(copy) : null,
+      });
+      if (res.ok) {
+        router.push(`/books/${bookId}`);
+        router.refresh();
+      } else setError(res.error);
+    });
+  }
+
   const title = draft.title.trim();
 
   return (
@@ -120,15 +144,33 @@ export function ConfirmSheet({
             <ul className="flex flex-col gap-3">
               {duplicates.map((d) => (
                 <li key={d.id} className="panel flex flex-col gap-3 p-4">
-                  <div>
-                    <p className="font-display text-lg leading-snug font-medium">{d.title}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {d.authors.join(", ") || "Unknown author"} · matched by {d.reason === "isbn" ? "ISBN" : "title and author"}
-                    </p>
+                  <div className="flex gap-3">
+                    <div className="w-14 shrink-0 self-start">
+                      <Cover url={d.coverUrl} title={d.title} author={d.authors[0]} sizes="56px" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-display text-lg leading-snug font-medium">{d.title}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {d.authors.join(", ") || "Unknown author"} · matched by {d.reason === "isbn" ? "ISBN" : "title and author"}
+                      </p>
+                    </div>
                   </div>
+                  {cover && cover !== d.coverUrl && (
+                    <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm">
+                      <input type="checkbox" checked={replaceCover} onChange={(e) => setReplaceCover(e.target.checked)} className="size-5 shrink-0 accent-[var(--primary)]" />
+                      <span>{d.coverUrl ? "Use the new cover" : "Use the new cover (it has none)"}</span>
+                    </label>
+                  )}
+                  <p className="text-sm text-muted-foreground">
+                    Updating fills the details it is missing from this lookup and keeps everything it has
+                    {ownership === "owned" ? ", and adds your copy" : ""}.
+                  </p>
                   <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button type="button" disabled={pending} onClick={() => updateExisting(d.id)}>
+                      Update the book you have
+                    </Button>
                     {ownership === "owned" && (
-                      <Button type="button" disabled={pending} onClick={() => addToExisting(d.id)}>
+                      <Button type="button" variant="outline" disabled={pending} onClick={() => addToExisting(d.id)}>
                         Add another copy
                       </Button>
                     )}
@@ -142,7 +184,7 @@ export function ConfirmSheet({
             <div className="flex flex-col gap-2 border-t border-border pt-4">
               <p className="text-sm text-muted-foreground">It is a different book, or a different work with the same name?</p>
               <Button type="button" variant="secondary" disabled={pending} onClick={() => save(true)}>
-                Add as a separate book
+                Add as a new book
               </Button>
               <Button type="button" variant="ghost" disabled={pending} onClick={() => setDuplicates(null)}>
                 Back to the details
@@ -243,7 +285,7 @@ export function ConfirmSheet({
                     <ChevronDown className={cn("size-4 transition-transform duration-[var(--dur)]", showDetails && "rotate-180")} aria-hidden />
                   </button>
                 )}
-                {showDetails && <BookFields draft={draft} onChange={setDraft} />}
+                {showDetails && <BookFields draft={draft} onChange={setDraft} seriesOptions={seriesOptions} />}
               </section>
 
               {error && (

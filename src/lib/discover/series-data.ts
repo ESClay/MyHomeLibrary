@@ -2,10 +2,11 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeGaps, type GapEntry, type GapSeries, type SeriesGap } from "./gaps";
 import { loadLibraryBooks } from "./recs";
+import { needsDiscovery } from "./series-sync";
 
 export type SeriesOverview = {
   gaps: SeriesGap[];
-  /** Books that name a series (or have a Hardcover id) but are not filed under one yet. */
+  /** Books not filed under a series that have not been checked for one yet (never, or not in the last 30 days). */
   unsynced: number;
   /** Books that mention any series at all. */
   withSeriesText: number;
@@ -29,10 +30,11 @@ export async function loadSeriesOverview(client: SupabaseClient, libraryId: stri
   // The two reads do not depend on each other; a caller that already has the library's books can pass them in.
   const [books, { data: textRows }] = await Promise.all([
     loaded ?? loadLibraryBooks(client, libraryId),
-    client.from("books").select("id, series_id, series_name, hardcover_id").eq("library_id", libraryId),
+    client.from("books").select("id, series_id, series_name, series_checked_at").eq("library_id", libraryId),
   ]);
   const withSeriesText = (textRows ?? []).filter((b) => b.series_id || b.series_name).length;
-  const unsynced = (textRows ?? []).filter((b) => !b.series_id && (b.series_name || b.hardcover_id)).length;
+  const nowMs = Date.now();
+  const unsynced = (textRows ?? []).filter((b) => needsDiscovery({ series_id: b.series_id as string | null, series_checked_at: b.series_checked_at as string | null }, nowMs)).length;
 
   const seriesIds = [...new Set(books.map((b) => b.seriesId).filter((s): s is string => !!s))];
   let series: GapSeries[] = [];

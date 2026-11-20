@@ -116,6 +116,16 @@ export const duplicateCheckSchema = z.object({
   isbn13: z.string().trim().regex(/^\d{13}$/).nullable().optional(),
 });
 
+export const updateExistingSchema = z.object({
+  bookId: uuid,
+  book: bookFieldsSchema,
+  provider: providerDataSchema,
+  /** take the new metadata's cover instead of the one the book has */
+  replaceCover: z.boolean().optional(),
+  /** a copy to add (an owned copy being added); null or missing adds none */
+  copy: copySchema.nullable().optional(),
+});
+
 export const updateBookSchema = z.object({ bookId: uuid, book: bookFieldsSchema });
 
 export const copyActionSchema = z.object({ bookId: uuid, copy: copySchema });

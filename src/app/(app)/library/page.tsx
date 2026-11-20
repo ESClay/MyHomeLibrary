@@ -3,7 +3,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { Button } from "@/components/ui/button";
 import { EmptyState, PageHeader, SpineRow } from "@/components/shelf";
-import { countLibraryBooks, loadLibraryPageItems, loadSeriesNames } from "@/lib/books/data";
+import { countLibraryBooks, loadAuthorVariants, loadLibraryPageItems, loadSeriesNames, loadSeriesOptions } from "@/lib/books/data";
 import { PAGE_SIZE, SORTS, defaultDir, parseLibraryParams, type Sort } from "@/lib/books/library-query";
 import { getLibraryContext } from "@/lib/library";
 import { loadShelf } from "@/lib/shelves/data";
@@ -26,11 +26,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   const savedSort = SORTS.find((s) => s === profile?.library_sort);
   const fallback = savedSort ? { sort: savedSort as Sort, dir: profile?.library_sort_dir === "desc" ? ("desc" as const) : profile?.library_sort_dir === "asc" ? ("asc" as const) : defaultDir(savedSort) } : null;
   const params = parseLibraryParams(search, fallback);
-  const [editing, page, librarySize, seriesNames, members, cookieStore] = await Promise.all([
+  const [editing, page, librarySize, seriesNames, seriesOptions, authorGroups, members, cookieStore] = await Promise.all([
     editId ? loadShelf(editId) : Promise.resolve(null),
     loadLibraryPageItems(current.id, user.id, params, { limit: PAGE_SIZE }),
     countLibraryBooks(current.id),
     loadSeriesNames(current.id),
+    current.role === "viewer" ? Promise.resolve([]) : loadSeriesOptions(current.id),
+    loadAuthorVariants(current.id),
     supabase.from("library_members").select("user_id", { count: "exact", head: true }).eq("library_id", current.id),
     cookies(),
   ]);
@@ -85,6 +87,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
         librarySize={librarySize}
         params={params}
         seriesNames={seriesNames}
+        seriesOptions={seriesOptions}
+        authorGroups={authorGroups}
         hasPartners={(members.count ?? 1) > 1}
         initialView={view}
         libraryId={current.id}

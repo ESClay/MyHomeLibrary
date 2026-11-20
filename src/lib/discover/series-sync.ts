@@ -5,10 +5,12 @@ import {
   BOOK_BATCH,
   chooseSeriesRef,
   hardcoverSeriesApi,
+  pickBookMatch,
   pickSeriesHit,
   seriesPacer,
   type SeriesApi,
 } from "@/lib/metadata/hardcover-series";
+import type { BookChange } from "@/lib/jobs/queue/types";
 
 /*
  * Series sync. Uses the SERVICE ROLE client (series / series_entries are service-write only), which bypasses RLS, so
@@ -26,6 +28,8 @@ export const SERIES_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 export const BOOK_RECHECK_MS = 30 * 24 * 60 * 60 * 1000;
 /** Most series-name searches in one run (each is one Hardcover request). */
 export const MAX_NAME_SEARCHES = 15;
+/** Most books looked up on Hardcover by ISBN or title in one run (each is one or two requests); the rest wait for the next run. */
+export const MAX_BOOK_LOOKUPS = 30;
 export const DEFAULT_BUDGET_MS = 50_000;
 /** Headroom kept free so a request that starts before the deadline can finish after it. */
 const REQUEST_HEADROOM_MS = 6_000;
@@ -37,6 +41,12 @@ export type SyncOptions = {
   /** Skip finding new series and only refresh the ones the library already has. */
   skipDiscovery?: boolean;
   staleMs?: number;
+  /** Most books looked up by ISBN or title in one run (default MAX_BOOK_LOOKUPS). The queued job passes Infinity: its slice time sets the pace. */
+  maxBookLookups?: number;
+  /** Most series-name searches in one run (default MAX_NAME_SEARCHES). */
+  maxNameSearches?: number;
+  /** Called with every book this run changes (before and after of just the changed fields), after the write succeeded. */
+  onChange?: (changes: BookChange[]) => Promise<void>;
   api?: SeriesApi;
   now?: () => number;
 };
@@ -62,8 +72,10 @@ type BookRow = {
   authors: string[] | null;
   series_id: string | null;
   series_name: string | null;
+  series_position: number | null;
   hardcover_id: number | null;
   series_checked_at: string | null;
+  isbn13?: string | null;
 };
 
 const PAGE = 1000;
@@ -73,7 +85,7 @@ async function loadBooks(admin: SupabaseClient, libraryId: string): Promise<Book
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await admin
       .from("books")
-      .select("id, title, authors, series_id, series_name, hardcover_id, series_checked_at")
+      .select("id, title, authors, series_id, series_name, series_position, hardcover_id, series_checked_at, isbn13")
       .eq("library_id", libraryId)
       .order("id")
       .range(from, from + PAGE - 1);
@@ -86,10 +98,12 @@ async function loadBooks(admin: SupabaseClient, libraryId: string): Promise<Book
 
 const isRateLimit = (e: unknown) => e instanceof Error && /\b429\b/.test(e.message);
 
-/** Books that still need their series found: unlinked, and not looked at recently. */
-export function needsDiscovery(b: Pick<BookRow, "series_id" | "series_checked_at" | "hardcover_id" | "series_name">, now: number): boolean {
+/**
+ * Books that still need their series found: unlinked, and not looked at recently. That includes books with no series
+ * text and no Hardcover id at all (Google Books, Open Library, photo and Calibre imports): those are looked up first.
+ */
+export function needsDiscovery(b: Pick<BookRow, "series_id" | "series_checked_at">, now: number): boolean {
   if (b.series_id) return false;
-  if (!b.hardcover_id && !b.series_name) return false;
   if (!b.series_checked_at) return true;
   return now - new Date(b.series_checked_at).getTime() > BOOK_RECHECK_MS;
 }
@@ -117,6 +131,12 @@ export async function syncLibrarySeries(admin: SupabaseClient, libraryId: string
   const staleMs = opts.staleMs ?? SERIES_STALE_MS;
   const pacer = opts.api ? null : seriesPacer(budgetMs);
 
+  const maxLookups = opts.maxBookLookups ?? MAX_BOOK_LOOKUPS;
+  const maxSearches = opts.maxNameSearches ?? MAX_NAME_SEARCHES;
+  const emit = async (changes: BookChange[]) => {
+    if (changes.length > 0 && opts.onChange) await opts.onChange(changes);
+  };
+
   const result: SyncResult = { linkedBooks: 0, syncedSeries: 0, remaining: 0, done: false, rateLimited: false, errors: [] };
   if (!api.configured()) return { ...result, unconfigured: "hardcover" };
 
@@ -143,10 +163,61 @@ export async function syncLibrarySeries(admin: SupabaseClient, libraryId: string
   let discoveryLeft = 0;
   if (!opts.skipDiscovery && !opts.onlySeriesId) {
     const todo = books.filter((b) => needsDiscovery(b, now()));
-    const byHardcover = todo.filter((b) => b.hardcover_id);
-    const named = todo.filter((b) => !b.hardcover_id && b.series_name);
-    const found = new Map<number, { name: string; bookIds: string[] }>(); // hardcover series id -> books
     const checked: string[] = [];
+
+    // (0) books with neither a Hardcover id nor a series name: find the book on Hardcover (ISBN-13 first, else title +
+    // first author, a confident match only) and store its id, so step (a) can file it. A bounded number per run.
+    const usedIds = new Set(books.map((b) => b.hardcover_id).filter((n): n is number => !!n));
+    const lookups = todo.filter((b) => !b.hardcover_id && !b.series_name);
+    const resolved = new Map<string, number>();
+    let looked = 0;
+    for (let i = 0; i < lookups.length && !result.rateLimited; i++) {
+      const b = lookups[i];
+      if (looked >= maxLookups || !(await slot())) {
+        discoveryLeft += lookups.length - i;
+        break;
+      }
+      looked++;
+      let hit: { hardcoverId: number } | null = null;
+      let failed = false;
+      const isbn = b.isbn13?.trim();
+      if (isbn) {
+        const res = await attempt("book lookup", () => api.bookByIsbn(isbn));
+        if (res.ok) hit = res.value;
+        else failed = true;
+      }
+      const author = b.authors?.[0] ?? null;
+      if (!hit && !failed && author && !result.rateLimited) {
+        if (await slot()) {
+          const res = await attempt("book search", () => api.searchBooks(`${b.title} ${author}`.trim()));
+          if (res.ok) hit = pickBookMatch(res.value, { title: b.title, author });
+          else failed = true;
+        } else {
+          failed = true; // out of time before the second request: leave it unstamped for the next run
+        }
+      }
+      if (failed) {
+        discoveryLeft++;
+        continue;
+      }
+      if (!hit) {
+        checked.push(b.id); // looked up, no confident match: stamped below so it is not asked again for a month
+        continue;
+      }
+      resolved.set(b.id, hit.hardcoverId); // this run files it in step (a)
+      // books.hardcover_id is unique across all libraries, so an id already taken is used for this run but not stored.
+      if (!usedIds.has(hit.hardcoverId)) {
+        usedIds.add(hit.hardcoverId);
+        const { error } = await admin.from("books").update({ hardcover_id: hit.hardcoverId }).eq("library_id", libraryId).eq("id", b.id).is("hardcover_id", null);
+        if (error && !/duplicate|unique|23505/i.test(`${error.code ?? ""} ${error.message}`)) result.errors.push(`hardcover id: ${error.message}`);
+        else if (!error) await emit([{ bookId: b.id, before: { hardcover_id: null }, after: { hardcover_id: hit.hardcoverId } }]);
+      }
+    }
+
+    const ready = todo.map((b) => (resolved.has(b.id) ? { ...b, hardcover_id: resolved.get(b.id) as number } : b));
+    const byHardcover = ready.filter((b) => b.hardcover_id);
+    const named = ready.filter((b) => !b.hardcover_id && b.series_name);
+    const found = new Map<number, { name: string; bookIds: string[] }>(); // hardcover series id -> books
 
     // (a) books with a Hardcover id: a batch of 40 per request
     for (let i = 0; i < byHardcover.length && !result.rateLimited; i += BOOK_BATCH) {
@@ -176,7 +247,7 @@ export async function syncLibrarySeries(admin: SupabaseClient, libraryId: string
     let searches = 0;
     for (let i = 0; i < groups.length && !result.rateLimited; i++) {
       const g = groups[i];
-      if (searches >= MAX_NAME_SEARCHES || !(await slot())) {
+      if (searches >= maxSearches || !(await slot())) {
         discoveryLeft += groups.slice(i).reduce((n, x) => n + x.ids.length, 0);
         break;
       }
@@ -213,7 +284,10 @@ export async function syncLibrarySeries(admin: SupabaseClient, libraryId: string
             .eq("library_id", libraryId)
             .in("id", v.bookIds);
           if (linkError) result.errors.push(`link: ${linkError.message}`);
-          else result.linkedBooks += v.bookIds.length;
+          else {
+            result.linkedBooks += v.bookIds.length;
+            await emit(v.bookIds.map((bookId) => ({ bookId, before: { series_id: null }, after: { series_id: seriesId } })));
+          }
         }
       }
     }
@@ -268,9 +342,82 @@ export async function syncLibrarySeries(admin: SupabaseClient, libraryId: string
     }
   }
 
+  // ------------------------------------------------ 3. copy the series' name and the book's number onto linked books
+  try {
+    await fillSeriesFields(admin, libraryId, opts.onlySeriesId, emit);
+  } catch (e) {
+    result.errors.push(`series names: ${e instanceof Error ? e.message : "failed"}`);
+  }
+
   result.remaining = discoveryLeft + staleLeft;
   result.done = result.remaining === 0 && !result.rateLimited && result.errors.length === 0;
   return result;
+}
+
+/**
+ * The library list, sort and filters read `books.series_name` / `series_position`, not `series_id`, so a book linked by
+ * the sync must carry them too. Fills only what is empty (a typed name or number is never overwritten). Reads once
+ * (books, series, entries) and writes grouped updates, so there is no per-book query loop. Returns books changed.
+ */
+export async function fillSeriesFields(
+  admin: SupabaseClient,
+  libraryId: string,
+  onlySeriesId?: string,
+  onChange?: (changes: BookChange[]) => Promise<void>,
+): Promise<number> {
+  const linked = (await loadBooks(admin, libraryId)).filter((b) => b.series_id && (!onlySeriesId || b.series_id === onlySeriesId));
+  const needy = linked.filter((b) => !b.series_name?.trim() || b.series_position === null);
+  if (needy.length === 0) return 0;
+
+  const seriesIds = [...new Set(needy.map((b) => b.series_id as string))];
+  const { data: seriesRows, error } = await admin.from("series").select("id, name").in("id", seriesIds);
+  if (error) throw new Error(error.message);
+  const nameById = new Map((seriesRows ?? []).map((s) => [s.id as string, (s.name as string | null)?.trim() ?? ""]));
+
+  const hcIds = [...new Set(needy.filter((b) => b.hardcover_id && b.series_position === null).map((b) => b.hardcover_id as number))];
+  const position = new Map<string, number>(); // `${series_id}|${hardcover_book_id}` -> position
+  for (let i = 0; i < hcIds.length; i += 200) {
+    const { data, error: entryError } = await admin
+      .from("series_entries")
+      .select("series_id, hardcover_book_id, position")
+      .in("series_id", seriesIds)
+      .in("hardcover_book_id", hcIds.slice(i, i + 200));
+    if (entryError) throw new Error(entryError.message);
+    for (const e of data ?? []) if (e.position !== null && e.position !== undefined) position.set(`${e.series_id}|${e.hardcover_book_id}`, Number(e.position));
+  }
+
+  // Group books that get the same patch into one update each.
+  const groups = new Map<string, { patch: Record<string, unknown>; ids: string[]; changes: BookChange[] }>();
+  for (const b of needy) {
+    const patch: Record<string, unknown> = {};
+    const name = nameById.get(b.series_id as string);
+    if (!b.series_name?.trim() && name) patch.series_name = name;
+    if (b.series_position === null && b.hardcover_id) {
+      const pos = position.get(`${b.series_id}|${b.hardcover_id}`);
+      if (pos !== undefined) patch.series_position = pos;
+    }
+    if (Object.keys(patch).length === 0) continue;
+    const key = JSON.stringify(patch);
+    const g = groups.get(key) ?? { patch, ids: [], changes: [] };
+    g.ids.push(b.id);
+    g.changes.push({
+      bookId: b.id,
+      before: Object.fromEntries(Object.keys(patch).map((k) => [k, (b as unknown as Record<string, string | number | null>)[k] ?? null])),
+      after: patch as BookChange["after"],
+    });
+    groups.set(key, g);
+  }
+  let changed = 0;
+  for (const g of groups.values()) {
+    for (let i = 0; i < g.ids.length; i += 200) {
+      const ids = g.ids.slice(i, i + 200);
+      const { error: writeError } = await admin.from("books").update(g.patch).eq("library_id", libraryId).in("id", ids);
+      if (writeError) throw new Error(writeError.message);
+      changed += ids.length;
+      if (onChange) await onChange(g.changes.slice(i, i + 200));
+    }
+  }
+  return changed;
 }
 
 /** Upserts a series' entries, removes ones Hardcover no longer lists, and stamps the series. */
@@ -302,4 +449,22 @@ async function writeEntries(
     .update({ name: data.name, author_name: data.authorName, synced_at: new Date().toISOString() })
     .eq("id", seriesId);
   return !error;
+}
+
+/**
+ * How much work a lookup has in front of it, in the same units as SyncResult.remaining: books still to find a series
+ * for plus this library's series that are stale. Used to size the progress of a queued job.
+ */
+export async function countSeriesWork(admin: SupabaseClient, libraryId: string, opts: { now?: () => number; staleMs?: number } = {}): Promise<number> {
+  const now = opts.now ?? Date.now;
+  const books = await loadBooks(admin, libraryId);
+  const discovery = books.filter((b) => needsDiscovery(b, now())).length;
+  const seriesIds = [...new Set(books.map((b) => b.series_id).filter((id): id is string => !!id))];
+  let stale = 0;
+  if (seriesIds.length > 0) {
+    const { data } = await admin.from("series").select("id, hardcover_id, synced_at").in("id", seriesIds);
+    const cutoff = now() - (opts.staleMs ?? SERIES_STALE_MS);
+    stale = (data ?? []).filter((s) => s.hardcover_id !== null && (!s.synced_at || new Date(s.synced_at as string).getTime() < cutoff)).length;
+  }
+  return discovery + stale;
 }

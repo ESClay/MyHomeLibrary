@@ -8,6 +8,7 @@ import { providerPolicyFor } from "@/lib/access";
 import { refreshFor } from "@/lib/metadata";
 import { authorizeBook, canEdit, fail, firstIssue, roleInLibrary, type ActionResult } from "@/lib/books/access";
 import { loadDuplicateCandidates } from "@/lib/books/data";
+import { planBookFill, type FillBook } from "@/lib/books/fill";
 import { loanError, parseDue, resolveBorrower } from "@/lib/loans/server";
 import { attachBooksToShelves } from "@/lib/shelves/assign";
 import {
@@ -17,6 +18,7 @@ import {
   duplicateCheckSchema,
   myBookSchema,
   updateBookSchema,
+  updateExistingSchema,
   updateCopySchema,
   updateReadSchema,
   type CopyInput,
@@ -29,6 +31,7 @@ export type DuplicateInfo = {
   title: string;
   authors: string[];
   reason: "isbn" | "title";
+  coverUrl: string | null;
 };
 
 export type CreateBookResult =
@@ -38,7 +41,7 @@ export type CreateBookResult =
 const NOT_EDITOR = "Only owners and editors can change the library.";
 
 function toDuplicateInfo(matches: DuplicateMatch[]): DuplicateInfo[] {
-  return matches.map((m) => ({ id: m.book.id, title: m.book.title, authors: m.book.authors, reason: m.reason }));
+  return matches.map((m) => ({ id: m.book.id, title: m.book.title, authors: m.book.authors, reason: m.reason, coverUrl: m.book.coverUrl ?? null }));
 }
 
 function copyRow(copy: CopyInput, fallbackIsbn: string | null) {
@@ -277,6 +280,61 @@ export async function addCopy(input: z.input<typeof copyActionSchema>): Promise<
   // Owning a copy means the book is no longer just on the wishlist.
   await auth.supabase.from("books").update({ ownership: "owned" }).eq("id", parsed.data.bookId).eq("ownership", "wishlist");
   revalidateBook(parsed.data.bookId);
+  return { ok: true };
+}
+
+/**
+ * "Update the book you have": fills the existing book's empty fields from the new metadata (never overwriting what is
+ * there), takes the new cover when asked, and adds a copy when the person was adding an owned one. Owners and editors.
+ */
+export async function updateExistingBook(input: z.input<typeof updateExistingSchema>): Promise<ActionResult> {
+  const parsed = updateExistingSchema.safeParse(input);
+  if (!parsed.success) return fail(firstIssue(parsed.error));
+  const { bookId, book, provider, replaceCover, copy } = parsed.data;
+  const auth = await authorizeBook(bookId, true);
+  if (!auth.ok) return fail(auth.error);
+
+  const { data: existing, error: loadError } = await auth.supabase
+    .from("books")
+    .select("subtitle, authors, series_name, series_position, description, cover_url, page_count, published_date, genres, isbn13, hardcover_id, google_books_id, ol_key, public_rating, public_rating_count, rating_source, ownership")
+    .eq("id", bookId)
+    .maybeSingle();
+  if (loadError || !existing) return fail("Could not load that book.");
+
+  const patch = planBookFill(
+    existing as unknown as FillBook,
+    {
+      subtitle: book.subtitle,
+      authors: book.authors,
+      series_name: book.seriesName,
+      series_position: book.seriesPosition,
+      description: book.description,
+      cover_url: book.coverUrl,
+      page_count: book.pageCount,
+      published_date: book.publishedDate,
+      genres: book.genres,
+      isbn13: book.isbn13,
+      hardcover_id: provider.hardcoverId ?? null,
+      google_books_id: provider.googleBooksId ?? null,
+      ol_key: provider.olKey ?? null,
+      public_rating: provider.publicRating ?? null,
+      public_rating_count: provider.publicRatingCount ?? null,
+      rating_source: provider.ratingSource ?? null,
+    },
+    !!replaceCover,
+  );
+
+  if (Object.keys(patch).length > 0) {
+    const { error } = await auth.supabase.from("books").update(patch).eq("id", bookId);
+    if (error) return fail("Could not update the book.");
+  }
+  if (copy && book.ownership === "owned") {
+    const { error } = await auth.supabase.from("copies").insert({ book_id: bookId, ...copyRow(copy, book.isbn13 ?? auth.book.isbn13) });
+    if (error) return fail("The book was updated, but the copy could not be added.");
+    // Owning a copy means the book is no longer just on the wishlist.
+    await auth.supabase.from("books").update({ ownership: "owned" }).eq("id", bookId).eq("ownership", "wishlist");
+  }
+  revalidateBook(bookId);
   return { ok: true };
 }
 

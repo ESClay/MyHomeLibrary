@@ -1,23 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, CircleAlert, ImagePlus, LoaderCircle, RotateCw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Camera, Check, CircleAlert, ImagePlus, LoaderCircle, RotateCw } from "lucide-react";
 import { SpineRow } from "@/components/shelf";
 import { Button } from "@/components/ui/button";
 import { downscaleToJpeg } from "@/lib/image";
+import { MAX_BATCH_PHOTOS, unfinishedUploads, type UploadState } from "@/lib/scan/batch";
 import { MAX_MODEL_IMAGE_BYTES, PHOTO_MAX_SIDE } from "@/lib/scan/photo";
-import type { ScanItem } from "@/lib/scan/resolve";
 import { createClient } from "@/lib/supabase/client";
-import { startScan } from "./actions";
-import { PhotoReview } from "./photo-review";
+import { queuePhotoBatch } from "./actions";
 
-type Phase =
-  | { name: "capture" }
-  | { name: "working"; step: "uploading" | "reading" }
-  | { name: "failed"; message: string; retry: boolean }
-  | { name: "review"; jobId: string; items: ScanItem[]; dropped: number };
-
-type Job = { id: string; path: string };
+type Item = { key: string; name: string; preview: string; state: UploadState; path: string | null; error?: string };
+type Phase = { name: "capture" } | { name: "uploading" } | { name: "queueing" } | { name: "failed"; message: string };
 
 const SPINES = [
   { w: 22, h: 70, tone: 1 },
@@ -43,184 +38,146 @@ async function prepare(file: File): Promise<Blob> {
   return blob;
 }
 
-export function PhotoScreen({
-  libraryId,
-  userId,
-  initialRemaining,
-  cap,
-}: {
-  libraryId: string;
-  userId: string;
-  initialRemaining: number;
-  cap: number;
-}) {
+/** Tells the server to clear uploaded photos that were never queued. Best effort; the daily sweep catches the rest. */
+function discardUploads(paths: string[]) {
+  if (paths.length === 0) return;
+  const body = JSON.stringify({ paths });
+  try {
+    if (!navigator.sendBeacon("/api/scan/discard-uploads", new Blob([body], { type: "application/json" }))) {
+      void fetch("/api/scan/discard-uploads", { method: "POST", body, keepalive: true });
+    }
+  } catch {
+    /* the sweep will get it */
+  }
+}
+
+export function PhotoScreen({ libraryId, userId, initialRemaining, cap }: { libraryId: string; userId: string; initialRemaining: number; cap: number }) {
+  const router = useRouter();
   const [phase, setPhase] = useState<Phase>({ name: "capture" });
+  const [items, setItems] = useState<Item[]>([]);
   const [remaining, setRemaining] = useState(initialRemaining);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [capMessage, setCapMessage] = useState<string | null>(null);
-  const job = useRef<Job | null>(null); // the live scan whose photo is still in storage
-  const pendingPath = useRef<string | null>(null); // uploaded, but no job yet
+  const [notice, setNotice] = useState<string | null>(null);
+  const itemsRef = useRef<Item[]>([]);
+  const alive = useRef(true);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
-  // Leaving the page (tab closed, navigation) clears the photo, best effort. A cron sweep catches the rest.
+  const patch = useCallback((key: string, change: Partial<Item>) => {
+    itemsRef.current = itemsRef.current.map((i) => (i.key === key ? { ...i, ...change } : i));
+    setItems(itemsRef.current);
+  }, []);
+
+  // Leaving the page clears only photos that never finished queueing. Queued photos belong to the background job and stay.
   useEffect(() => {
-    const clear = () => {
-      const j = job.current;
-      if (!j) return;
-      job.current = null;
-      try {
-        if (!navigator.sendBeacon(`/api/scan/${j.id}/discard`)) {
-          void fetch(`/api/scan/${j.id}/discard`, { method: "POST", keepalive: true });
-        }
-      } catch {
-        /* the sweep will get it */
-      }
-    };
+    alive.current = true;
+    const clear = () => discardUploads(unfinishedUploads(itemsRef.current));
     window.addEventListener("pagehide", clear);
     return () => {
+      alive.current = false;
       window.removeEventListener("pagehide", clear);
       clear();
+      for (const i of itemsRef.current) URL.revokeObjectURL(i.preview);
     };
   }, []);
 
-  useEffect(() => () => void (preview && URL.revokeObjectURL(preview)), [preview]);
-
-  const discardPhoto = useCallback(async (saved: boolean) => {
-    const j = job.current;
-    job.current = null;
-    if (j) {
-      try {
-        await fetch(`/api/scan/${j.id}/discard${saved ? "?saved=1" : ""}`, { method: "POST", keepalive: true });
-      } catch {
-        /* the sweep will get it */
-      }
-    } else if (pendingPath.current) {
-      await createClient().storage.from("scans").remove([pendingPath.current]).catch(() => undefined);
-    }
-    pendingPath.current = null;
-  }, []);
-
-  const read = useCallback(
-    async (path: string) => {
-      setPhase({ name: "working", step: "reading" });
-      const started = await startScan({ libraryId, photoPath: path });
-      if (!started.ok) {
-        if (started.capReached) {
-          setCapMessage(started.error);
-          setRemaining(0);
-          await discardPhoto(false);
-          setPhase({ name: "capture" });
-        } else {
-          setPhase({ name: "failed", message: started.error, retry: false });
-        }
-        return;
-      }
-      job.current = { id: started.jobId, path };
-      pendingPath.current = null;
-      setRemaining(started.remaining);
-
-      let body: { ok: boolean; items?: ScanItem[]; dropped?: number; error?: string };
-      try {
-        const res = await fetch(`/api/scan/${started.jobId}`, { method: "POST" });
-        body = (await res.json()) as typeof body;
-      } catch {
-        setPhase({ name: "failed", message: "The connection dropped while reading. Try again.", retry: true });
-        return;
-      }
-      if (!body.ok || !body.items) {
-        setPhase({ name: "failed", message: body.error ?? "Something went wrong reading that photo.", retry: true });
-        return;
-      }
-      setPhase({ name: "review", jobId: started.jobId, items: body.items, dropped: body.dropped ?? 0 });
-    },
-    [libraryId, discardPhoto],
-  );
-
-  async function onFile(file: File | undefined) {
-    if (fileRef.current) fileRef.current.value = "";
-    if (cameraRef.current) cameraRef.current.value = "";
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setPhase({ name: "failed", message: "That file is not a photo.", retry: false });
+  const queue = useCallback(async () => {
+    const paths = itemsRef.current.filter((i) => i.state === "uploaded" && i.path).map((i) => i.path as string);
+    if (paths.length === 0) {
+      setPhase({ name: "failed", message: "None of those photos could be uploaded." });
       return;
     }
-    setCapMessage(null);
-    setPreview(URL.createObjectURL(file));
-    setPhase({ name: "working", step: "uploading" });
-    try {
-      const blob = await prepare(file);
-      const path = `${libraryId}/${userId}/${crypto.randomUUID()}.jpg`;
-      const { error } = await createClient().storage.from("scans").upload(path, blob, {
-        contentType: "image/jpeg",
-        cacheControl: "60",
-      });
-      if (error) throw new Error("The photo could not be uploaded. Check your connection and try again.");
-      pendingPath.current = path;
-      await read(path);
-    } catch (e) {
-      setPhase({ name: "failed", message: e instanceof Error ? e.message : "The photo could not be prepared.", retry: false });
+    setPhase({ name: "queueing" });
+    const res = await queuePhotoBatch({ libraryId, photoPaths: paths });
+    if (!res.ok) {
+      if (res.capReached) {
+        setRemaining(0);
+        discardUploads(paths);
+        itemsRef.current = itemsRef.current.map((i) => (i.state === "uploaded" ? { ...i, state: "failed" as const, error: "Not queued" } : i));
+        setItems(itemsRef.current);
+        setNotice(res.error);
+        setPhase({ name: "capture" });
+        return;
+      }
+      setPhase({ name: "failed", message: res.error });
+      return;
     }
+    // From here the photos belong to the job: nothing is discarded when the page goes.
+    itemsRef.current = itemsRef.current.map((i) => (i.state === "uploaded" ? { ...i, state: "queued" as const } : i));
+    setItems(itemsRef.current);
+    router.push(`/add/photo?batch=${res.jobId}&queued=1`);
+  }, [libraryId, router]);
+
+  async function onFiles(list: FileList | null) {
+    const files = [...(list ?? [])];
+    if (fileRef.current) fileRef.current.value = "";
+    if (cameraRef.current) cameraRef.current.value = "";
+    if (files.length === 0) return;
+    const photos = files.filter((f) => f.type.startsWith("image/"));
+    setNotice(null);
+    if (photos.length === 0) return setNotice("Those files are not photos.");
+    const taken = photos.slice(0, MAX_BATCH_PHOTOS);
+    if (photos.length > taken.length) setNotice(`Only the first ${MAX_BATCH_PHOTOS} photos were used. Add the rest in another batch.`);
+
+    const fresh: Item[] = taken.map((f) => ({ key: crypto.randomUUID(), name: f.name || "Photo", preview: URL.createObjectURL(f), state: "waiting", path: null }));
+    for (const i of itemsRef.current) URL.revokeObjectURL(i.preview);
+    itemsRef.current = fresh;
+    setItems(fresh);
+    setPhase({ name: "uploading" });
+
+    // One after another: a phone connection does better with a single upload at a time.
+    for (let n = 0; n < taken.length; n++) {
+      if (!alive.current) return;
+      const item = fresh[n];
+      const path = `${libraryId}/${userId}/${crypto.randomUUID()}.jpg`;
+      patch(item.key, { state: "uploading", path });
+      try {
+        const blob = await prepare(taken[n]);
+        const { error } = await createClient().storage.from("scans").upload(path, blob, { contentType: "image/jpeg", cacheControl: "60" });
+        if (error) throw new Error("Could not upload. Check your connection.");
+        if (!alive.current) {
+          discardUploads([path]);
+          return;
+        }
+        patch(item.key, { state: "uploaded" });
+      } catch (e) {
+        patch(item.key, { state: "failed", path: null, error: e instanceof Error ? e.message : "Could not prepare that photo." });
+      }
+    }
+    if (alive.current) await queue();
   }
 
   async function startOver() {
-    await discardPhoto(false);
-    setPreview(null);
+    discardUploads(unfinishedUploads(itemsRef.current));
+    for (const i of itemsRef.current) URL.revokeObjectURL(i.preview);
+    itemsRef.current = [];
+    setItems([]);
     setPhase({ name: "capture" });
-  }
-
-  async function retry() {
-    const path = job.current?.path ?? pendingPath.current;
-    if (!path) return startOver();
-    pendingPath.current = path;
-    job.current = null; // the failed job is finished; a new one is counted and run
-    await read(path);
   }
 
   const inputs = (
     <>
-      <input ref={fileRef} type="file" accept="image/*" className="sr-only" tabIndex={-1} aria-label="Choose a photo from your library" onChange={(e) => void onFile(e.target.files?.[0])} />
-      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1} aria-label="Take a photo" onChange={(e) => void onFile(e.target.files?.[0])} />
+      <input ref={fileRef} type="file" accept="image/*" multiple className="sr-only" tabIndex={-1} aria-label="Choose photos from your library" onChange={(e) => void onFiles(e.target.files)} />
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1} aria-label="Take a photo" onChange={(e) => void onFiles(e.target.files)} />
     </>
   );
 
-  if (phase.name === "review") {
+  if (phase.name === "uploading" || phase.name === "queueing") {
+    const done = items.filter((i) => i.state !== "waiting" && i.state !== "uploading").length;
+    const pct = items.length ? Math.round((done / items.length) * 100) : 0;
     return (
-      <PhotoReview
-        libraryId={libraryId}
-        jobId={phase.jobId}
-        photoUrl={preview}
-        items={phase.items}
-        dropped={phase.dropped}
-        onSaved={() => discardPhoto(true)}
-        onStartOver={startOver}
-      />
-    );
-  }
-
-  if (phase.name === "working") {
-    return (
-      <section aria-label="Reading your photo" className="panel rise flex flex-col gap-5 p-4 md:p-5">
-        <div
-          className="relative mx-auto aspect-[4/3] w-full max-w-xl overflow-hidden rounded-lg bg-paper-deep shadow-[var(--shadow-cover)]"
-        >
-          {preview && (
-            // A local object URL for the photo just taken; next/image cannot optimise it.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={preview} alt="Your photo" className="size-full object-cover" />
-          )}
-          <div aria-hidden className="absolute inset-0 bg-black/20" />
-          <div aria-hidden className="read-sweep absolute inset-x-0 h-0.5 bg-[var(--brand-gilt)] shadow-[0_0_14px_2px_var(--brand-gilt)]" />
+      <section aria-labelledby="upload-heading" className="panel rise flex flex-col gap-5 p-5 md:p-8">
+        <div className="flex flex-col gap-1">
+          <h2 id="upload-heading" className="text-2xl leading-tight font-medium">
+            {phase.name === "queueing" ? "Queueing your photos" : "Uploading your photos"}
+          </h2>
+          <p role="status" aria-live="polite" className="text-base text-muted-foreground">
+            {phase.name === "queueing" ? "Almost done." : `${done} of ${items.length} uploaded. Keep this page open until they are all up. Then you can leave.`}
+          </p>
         </div>
-        <div role="status" aria-live="polite" className="flex items-start gap-3">
-          <LoaderCircle aria-hidden className="mt-0.5 size-5 shrink-0 animate-spin motion-reduce:animate-none" />
-          <div className="flex flex-col gap-1">
-            <p className="font-display text-xl leading-snug font-medium">
-              {phase.step === "uploading" ? "Uploading your photo…" : "Reading the books…"}
-            </p>
-            <p className="text-sm text-muted-foreground">A full shelf can take a minute. Stay on this page until it finishes.</p>
-          </div>
+        <div role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} className="h-1.5 overflow-hidden rounded-full bg-accent">
+          <div className="h-full rounded-full bg-gilt transition-[width] duration-[var(--dur)] ease-[var(--ease)] motion-reduce:transition-none" style={{ width: `${Math.max(pct, 4)}%` }} />
         </div>
+        <UploadList items={items} />
       </section>
     );
   }
@@ -234,33 +191,34 @@ export function PhotoScreen({
             <CircleAlert aria-hidden className="mt-0.5 size-5 shrink-0 text-destructive" /> {phase.message}
           </p>
           <div className="flex flex-col gap-2 sm:flex-row">
-            {phase.retry && (
-              <Button type="button" onClick={() => void retry()}>
+            {items.some((i) => i.state === "uploaded") && (
+              <Button type="button" onClick={() => void queue()}>
                 <RotateCw aria-hidden /> Try again
               </Button>
             )}
             <Button type="button" variant="outline" onClick={() => void startOver()}>
-              Use a different photo
+              Choose different photos
             </Button>
           </div>
+          {items.length > 0 && <UploadList items={items} />}
         </div>
       )}
 
       {phase.name === "capture" && (
-        <section className="panel rise flex flex-col gap-6 p-5 md:p-8" style={{ ["--i" as string]: 1 }}>
+        <section className="panel rise flex flex-col gap-6 p-5 md:p-8" style={{ ["--i" as string]: 1 }} aria-label="Add photos">
           <SpineRow spines={[...SPINES]} className="mx-auto w-full max-w-xs" />
           <div className="flex flex-col gap-3 sm:flex-row">
             <Button type="button" size="lg" className="sm:flex-1" disabled={remaining === 0} onClick={() => cameraRef.current?.click()}>
               <Camera aria-hidden /> Take a photo
             </Button>
             <Button type="button" size="lg" variant="outline" className="sm:flex-1" disabled={remaining === 0} onClick={() => fileRef.current?.click()}>
-              <ImagePlus aria-hidden /> Choose from my photos
+              <ImagePlus aria-hidden /> Choose photos
             </Button>
           </div>
-          {(capMessage || remaining === 0) && (
+          {(notice || remaining === 0) && (
             <p role="alert" className="flex items-start gap-2 text-sm text-destructive">
               <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-              {capMessage ?? `You have used all ${cap} photo reads for today. Barcode scanning and search still work.`}
+              {notice ?? `You have used all ${cap} photo reads for today. Barcode scanning and search still work.`}
             </p>
           )}
           <ul className="flex flex-col gap-2 text-sm text-muted-foreground">
@@ -272,10 +230,36 @@ export function PhotoScreen({
             ))}
           </ul>
           <p className="text-xs text-muted-foreground">
-            {remaining} of {cap} photo reads left today. The photo is deleted as soon as you finish reviewing.
+            Pick up to {MAX_BATCH_PHOTOS} photos at once. {remaining} of {cap} photo reads left today; any extra photos wait for tomorrow&apos;s allowance. Each photo is deleted as soon as you finish reviewing it.
           </p>
         </section>
       )}
     </div>
+  );
+}
+
+function UploadList({ items }: { items: Item[] }) {
+  return (
+    <ul className="flex flex-col divide-y divide-border">
+      {items.map((i, n) => (
+        <li key={i.key} className="flex min-h-14 items-center gap-3 py-2">
+          {/* A local object URL for the photo just chosen; next/image cannot optimise it. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={i.preview} alt="" className="size-11 shrink-0 rounded-md object-cover shadow-[var(--shadow-cover)]" />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <p className="text-base font-medium">Photo {n + 1}</p>
+            <p className={i.state === "failed" ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>
+              {i.state === "waiting" && "Waiting to upload"}
+              {i.state === "uploading" && "Uploading"}
+              {(i.state === "uploaded" || i.state === "queued") && "Uploaded"}
+              {i.state === "failed" && (i.error ?? "Could not upload")}
+            </p>
+          </div>
+          {i.state === "uploading" && <LoaderCircle aria-hidden className="size-5 shrink-0 animate-spin motion-reduce:animate-none" />}
+          {(i.state === "uploaded" || i.state === "queued") && <Check aria-hidden className="size-5 shrink-0 text-gilt" />}
+          {i.state === "failed" && <CircleAlert aria-hidden className="size-5 shrink-0 text-destructive" />}
+        </li>
+      ))}
+    </ul>
   );
 }

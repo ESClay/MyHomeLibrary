@@ -6,11 +6,13 @@ const load = vi.fn();
 const update = vi.fn();
 const eq = vi.fn();
 const from = vi.fn();
+const rpc = vi.fn();
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/library", () => ({ getLibraryContext: () => context(), requireUser: async () => ({ id: "me" }) }));
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from }) }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from, rpc }) }));
 vi.mock("@/lib/books/data", () => ({ loadLibraryPageItems: (...a: unknown[]) => load(...a) }));
 
-import { loadLibraryPage, saveLibrarySort } from "./actions";
+import { loadLibraryPage, renameAuthor, renameSeries, saveLibrarySort } from "./actions";
 
 const item = (n: number): LibraryItem => ({
   id: String(n).padStart(3, "0"),
@@ -87,5 +89,79 @@ describe("saveLibrarySort", () => {
   it("reports a failed write", async () => {
     eq.mockResolvedValue({ error: { message: "x" } });
     expect(await saveLibrarySort({ sort: "title", dir: "asc" })).toMatchObject({ ok: false });
+  });
+});
+
+describe("renameSeries", () => {
+  const LIB = "11111111-1111-4111-8111-111111111111";
+  const as = (role: string) => context.mockResolvedValue({ user: { id: "me" }, libraries: [{ id: LIB, role }] });
+  beforeEach(() => rpc.mockReset().mockResolvedValue({ data: 3, error: null }));
+
+  it("lets owners and editors rename and returns the count", async () => {
+    for (const role of ["owner", "editor"]) {
+      as(role);
+      expect(await renameSeries({ libraryId: LIB, from: "Disney Villains", to: "Villains" })).toEqual({ ok: true, count: 3 });
+    }
+    expect(rpc).toHaveBeenCalledWith("library_rename_series", { p_library_id: LIB, p_from: "Disney Villains", p_to: "Villains", p_author: null });
+  });
+
+  it("refuses viewers and non-members without touching the database", async () => {
+    as("viewer");
+    expect(await renameSeries({ libraryId: LIB, from: "A", to: "B" })).toMatchObject({ ok: false });
+    context.mockResolvedValue({ user: { id: "me" }, libraries: [] });
+    expect(await renameSeries({ libraryId: LIB, from: "A", to: "B" })).toMatchObject({ ok: false, error: "That library is not yours." });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("validates: trimmed, 1 to 200 characters, and different from the old name", async () => {
+    as("owner");
+    expect(await renameSeries({ libraryId: LIB, from: "A", to: "   " })).toMatchObject({ ok: false });
+    expect(await renameSeries({ libraryId: LIB, from: "A", to: "x".repeat(201) })).toMatchObject({ ok: false });
+    expect(await renameSeries({ libraryId: LIB, from: " A ", to: "A" })).toMatchObject({ ok: false });
+    expect(await renameSeries({ libraryId: "nope", from: "A", to: "B" })).toMatchObject({ ok: false });
+    expect(rpc).not.toHaveBeenCalled();
+    await renameSeries({ libraryId: LIB, from: "  A ", to: " B  " });
+    expect(rpc).toHaveBeenCalledWith("library_rename_series", expect.objectContaining({ p_from: "A", p_to: "B" }));
+  });
+
+  it("passes the author scope through and reports a database error", async () => {
+    as("editor");
+    await renameSeries({ libraryId: LIB, from: "A", to: "B", author: " Serena Valentino " });
+    expect(rpc).toHaveBeenCalledWith("library_rename_series", expect.objectContaining({ p_author: "Serena Valentino" }));
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    expect(await renameSeries({ libraryId: LIB, from: "A", to: "B" })).toEqual({ ok: false, error: "Could not rename the series." });
+  });
+});
+
+describe("renameAuthor", () => {
+  const LIB = "11111111-1111-4111-8111-111111111111";
+  const as = (role: string) => context.mockResolvedValue({ user: { id: "me" }, libraries: [{ id: LIB, role }] });
+  beforeEach(() => rpc.mockReset().mockResolvedValue({ data: 2, error: null }));
+
+  it("lets owners and editors change a spelling and returns the count", async () => {
+    for (const role of ["owner", "editor"]) {
+      as(role);
+      expect(await renameAuthor({ libraryId: LIB, from: " Gail Z Martin ", to: "Gail Z. Martin" })).toEqual({ ok: true, count: 2 });
+    }
+    expect(rpc).toHaveBeenCalledWith("library_rename_author", { p_library_id: LIB, p_from: "Gail Z Martin", p_to: "Gail Z. Martin" });
+  });
+
+  it("refuses viewers and non-members without touching the database", async () => {
+    as("viewer");
+    expect(await renameAuthor({ libraryId: LIB, from: "A", to: "B" })).toMatchObject({ ok: false });
+    context.mockResolvedValue({ user: { id: "me" }, libraries: [] });
+    expect(await renameAuthor({ libraryId: LIB, from: "A", to: "B" })).toMatchObject({ ok: false, error: "That library is not yours." });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("validates the names and reports a database error", async () => {
+    as("owner");
+    expect(await renameAuthor({ libraryId: LIB, from: "A", to: "  " })).toMatchObject({ ok: false });
+    expect(await renameAuthor({ libraryId: LIB, from: "A", to: "x".repeat(201) })).toMatchObject({ ok: false });
+    expect(await renameAuthor({ libraryId: LIB, from: "A", to: " A " })).toMatchObject({ ok: false });
+    expect(await renameAuthor({ libraryId: "nope", from: "A", to: "B" })).toMatchObject({ ok: false });
+    expect(rpc).not.toHaveBeenCalled();
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    expect(await renameAuthor({ libraryId: LIB, from: "A", to: "B" })).toEqual({ ok: false, error: "Could not change the spelling." });
   });
 });

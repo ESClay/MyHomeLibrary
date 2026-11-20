@@ -5,6 +5,7 @@ import { LOCKED_SENTENCE } from "@/components/locked";
 import { PageHeader } from "@/components/shelf";
 import { hasFullAccess } from "@/lib/access";
 import { canEdit } from "@/lib/books/access";
+import { loadSeriesOptions } from "@/lib/books/data";
 import { getLibraryContext } from "@/lib/library";
 import { loadBorrowers } from "@/lib/loans/data";
 import { createClient } from "@/lib/supabase/server";
@@ -18,7 +19,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ i
   const { user, current, currency } = await getLibraryContext();
   if (!current) return null; // The layout shows the create-library prompt.
   const editor = canEdit(current.role);
-  const [borrowers, fullAccess] = await Promise.all([editor ? loadBorrowers(current.id) : Promise.resolve([]), hasFullAccess(await createClient(), user.id)]);
+  const [borrowers, seriesOptions, fullAccess] = await Promise.all([editor ? loadBorrowers(current.id) : Promise.resolve([]), editor ? loadSeriesOptions(current.id) : Promise.resolve([]), hasFullAccess(await createClient(), user.id)]);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
@@ -98,7 +99,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ i
               <ChevronRight aria-hidden className="size-5 shrink-0 text-muted-foreground transition-transform duration-[var(--dur-fast)] group-hover:translate-x-0.5" />
             </Link>
           </div>
-          <AddBook libraryId={current.id} fullAccess={fullAccess} manualIsbn={manualIsbn} borrowers={borrowers.map((b) => ({ id: b.id, name: b.name }))} currency={currency} />
+          <AddBook libraryId={current.id} fullAccess={fullAccess} manualIsbn={manualIsbn} borrowers={borrowers.map((b) => ({ id: b.id, name: b.name }))} currency={currency} seriesOptions={seriesOptions} />
         </>
       ) : (
         <p className="panel p-5 text-base">

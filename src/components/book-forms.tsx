@@ -5,9 +5,11 @@ import { useLocale } from "@/components/locale-provider";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
+import { SeriesCombobox } from "@/components/series-combobox";
 import { Textarea } from "@/components/ui/textarea";
 import { CONDITIONS, CONDITION_LABEL, FORMATS, FORMAT_LABEL, type Condition, type Format, type Ownership } from "@/lib/books/constants";
 import type { BookMetadata } from "@/lib/metadata/types";
+import type { SeriesOption } from "@/lib/books/series-suggest";
 import { currencyLabel } from "@/lib/regions";
 
 export function Field({
@@ -92,7 +94,16 @@ export function draftToFields(d: BookDraft, ownership: Ownership, coverUrl: stri
   };
 }
 
-export function BookFields({ draft, onChange }: { draft: BookDraft; onChange: (next: BookDraft) => void }) {
+export function BookFields({
+  draft,
+  onChange,
+  seriesOptions = [],
+}: {
+  draft: BookDraft;
+  onChange: (next: BookDraft) => void;
+  /** The library's series, for the series field's suggestions. May be empty. */
+  seriesOptions?: readonly SeriesOption[];
+}) {
   const set = (k: keyof BookDraft) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     onChange({ ...draft, [k]: e.target.value });
   return (
@@ -110,7 +121,17 @@ export function BookFields({ draft, onChange }: { draft: BookDraft; onChange: (n
           {(id) => <Input id={id} value={draft.authors} onChange={set("authors")} autoComplete="off" />}
         </Field>
       </div>
-      <Field label="Series">{(id) => <Input id={id} value={draft.seriesName} onChange={set("seriesName")} maxLength={200} />}</Field>
+      <Field label="Series">
+        {(id) => (
+          <SeriesCombobox
+            id={id}
+            value={draft.seriesName}
+            onChange={(v) => onChange({ ...draft, seriesName: v })}
+            author={list(draft.authors)[0] ?? ""}
+            options={seriesOptions}
+          />
+        )}
+      </Field>
       <Field label="Number in series">
         {(id) => <Input id={id} value={draft.seriesPosition} onChange={set("seriesPosition")} inputMode="decimal" placeholder="1" />}
       </Field>

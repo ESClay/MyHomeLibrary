@@ -101,3 +101,38 @@ test("the chosen library sort is remembered across navigation and reloads", asyn
   await page.reload();
   await expect(page.getByLabel("Sort by")).toHaveValue("title");
 });
+
+test("the series field suggests the library's series, keeps free text and picks with the keyboard", async ({ page }) => {
+  await page.goto("/sign-in");
+  await page.getByLabel("Email").fill(email!);
+  await page.getByLabel("Password").fill(password!);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.waitForURL("**/library");
+
+  await page.goto("/add");
+  await page.getByRole("button", { name: "Enter a book by hand" }).click();
+  const sheet = page.getByRole("dialog");
+  const series = sheet.getByRole("combobox", { name: "Series" });
+
+  // Free text is always allowed, listed series or not.
+  await series.fill("E2E Made-Up Series");
+  await expect(series).toHaveValue("E2E Made-Up Series");
+
+  // Any series already in the library is offered; arrows move, Enter picks, Escape closes.
+  await series.fill("");
+  await series.press("ArrowDown");
+  const options = sheet.getByRole("option");
+  if ((await options.count()) > 0) {
+    await expect(series).toHaveAttribute("aria-expanded", "true");
+    const first = (await options.first().innerText()).trim();
+    await series.press("ArrowDown");
+    await series.press("Enter");
+    await expect(series).toHaveAttribute("aria-expanded", "false");
+    const value = await series.inputValue();
+    expect(value.length).toBeGreaterThan(0);
+    expect(first.length).toBeGreaterThan(0);
+    await series.fill("x");
+    await series.press("Escape");
+    await expect(series).toHaveAttribute("aria-expanded", "false");
+  }
+});

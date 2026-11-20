@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 import { RecommendError, recommendConfigured } from "@/lib/ai/recommend";
 import { canEdit, fail, firstIssue, roleInLibrary, type ActionResult } from "@/lib/books/access";
@@ -10,6 +11,8 @@ import { AccessDenied, CapReached, NotEnoughSignal, generateSet, latestSets } fr
 import { syncLibrarySeries } from "@/lib/discover/series-sync";
 import { entryToMetadata, createInputFromMetadata } from "@/lib/discover/to-book";
 import type { StoredPick } from "@/lib/discover/types";
+import { enqueueJob } from "@/lib/jobs/queue/enqueue";
+import { runJobsTick } from "@/lib/jobs/queue/tick";
 import { hardcoverConfigured } from "@/lib/metadata/hardcover";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -31,7 +34,11 @@ async function member(libraryId: string) {
 
 const SERIES_REFRESH_MIN_AGE_MS = 5 * 60 * 1000;
 
-/** Re-syncs one series (when `seriesId` is given) or looks for the library's series. The caller must be a member. */
+/**
+ * Re-syncs one series (when `seriesId` is given, inline: it is one request), or queues a series lookup for the whole
+ * library and returns at once; the job worker does it in the background (the active job is returned if one exists).
+ * The caller must be a member with full access.
+ */
 export async function refreshSeries(input: { libraryId: string; seriesId?: string }): Promise<ActionResult<{ message: string }>> {
   const parsed = z.object({ libraryId: uuid, seriesId: uuid.optional() }).safeParse(input);
   if (!parsed.success) return fail(firstIssue(parsed.error));
@@ -61,6 +68,31 @@ export async function refreshSeries(input: { libraryId: string; seriesId?: strin
     if (s?.synced_at && Date.now() - new Date(s.synced_at).getTime() < SERIES_REFRESH_MIN_AGE_MS) {
       return { ok: true, message: "Already refreshed a moment ago." };
     }
+  }
+
+  if (!parsed.data.seriesId) {
+    let queued;
+    try {
+      queued = await enqueueJob(admin, { libraryId: parsed.data.libraryId, userId: who.user.id, kind: "series_lookup" });
+    } catch {
+      return fail("Could not start the series lookup. Try again shortly.");
+    }
+    // Start work now rather than waiting for the next minute's tick; the claim is atomic, so a tick that overlaps is harmless.
+    after(async () => {
+      try {
+        await runJobsTick(admin);
+      } catch {
+        // the next tick picks the job up
+      }
+    });
+    revalidatePath("/discover");
+    revalidatePath("/activity");
+    return {
+      ok: true,
+      message: queued.created
+        ? "Looking up series in the background. You can leave this page; Activity tells you when it is done."
+        : "A series lookup is already running.",
+    };
   }
 
   const res = await syncLibrarySeries(admin, parsed.data.libraryId, {

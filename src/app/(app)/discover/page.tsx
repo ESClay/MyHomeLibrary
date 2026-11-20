@@ -16,16 +16,19 @@ import { Locked } from "@/components/locked";
 import { PickCardsSkeleton } from "@/components/skeletons";
 import { EmptyState, PageHeader, SpineRow } from "@/components/shelf";
 import { getDeclined, getLibraryBooks, getLibraryIndex } from "./loaders";
-import { FindSeriesButton, SeriesSection } from "./series-section";
+import { loadActiveSeriesJob } from "@/lib/jobs/queue/queries";
+import { FindSeriesButton, SeriesJobStatus, SeriesSection } from "./series-section";
+import { DiscoverTabs } from "./discover-tabs";
+import { panelId, parseTab, tabId, type DiscoverTabId } from "./tab-ids";
 import { RecSection, type CapView, type ClientPick, type RecState } from "./rec-section";
 
 export const metadata: Metadata = { title: "Discover" };
 /** Generating picks (and the series lookups behind the buttons) can take a couple of minutes. */
 export const maxDuration = 300;
 
-function SectionPanel({ index, title, lede, children }: { index: number; title: string; lede: string; children: React.ReactNode }) {
+function SectionPanel({ tab, index, title, lede, children }: { tab: DiscoverTabId; index: number; title: string; lede: string; children: React.ReactNode }) {
   return (
-    <section aria-labelledby={`discover-${index}`} className="rise panel flex flex-col gap-6 p-5 md:p-8" style={{ ["--i" as string]: index }}>
+    <section role="tabpanel" id={panelId(tab)} aria-labelledby={tabId(tab)} className="rise panel flex flex-col gap-6 p-5 md:p-8" style={{ ["--i" as string]: index }}>
       <div className="flex max-w-prose flex-col gap-2">
         <h2 id={`discover-${index}`} className="text-2xl leading-tight font-medium">
           {title}
@@ -76,6 +79,7 @@ function SeriesBody({
   canEditLibrary,
   syncConfigured,
   canSync,
+  activeJob,
 }: {
   libraryId: string;
   overview: SeriesOverview | null;
@@ -84,6 +88,8 @@ function SeriesBody({
   syncConfigured: boolean;
   /** Whether this person may start a series sync (full access). Without it they still see what others have synced. */
   canSync: boolean;
+  /** A series lookup that is queued or running for this library, which replaces the Find my series button. */
+  activeJob: { id: string; status: "queued" | "running"; processed: number; total: number; canCancel: boolean } | null;
 }) {
   if (failed || !overview) {
     return <p className="text-base text-muted-foreground">The series list could not be loaded. Refresh the page to try again.</p>;
@@ -97,7 +103,7 @@ function SeriesBody({
     <p className="text-sm text-muted-foreground">Series lookup is not set up on this server yet, so new series cannot be fetched and existing ones cannot be refreshed.</p>
   ) : null;
 
-  if (withSeriesText === 0 && gaps.length === 0) {
+  if (withSeriesText === 0 && gaps.length === 0 && unsynced === 0) {
     return (
       <div className="flex flex-col gap-4">
         <EmptyState
@@ -112,12 +118,13 @@ function SeriesBody({
 
   return (
     <div className="flex flex-col gap-6">
+      {activeJob && <SeriesJobStatus job={activeJob} canCancel={activeJob.canCancel} />}
       {unsynced > 0 && (
         <div className="flex flex-col gap-3 rounded-[10px] border border-dashed border-input p-4">
           <p className="text-base">
-            {unsynced} book{unsynced === 1 ? "" : "s"} {unsynced === 1 ? "belongs" : "belong"} to a series that has not been looked up yet.
+            {unsynced} book{unsynced === 1 ? "" : "s"} {unsynced === 1 ? "hasn't" : "haven't"} been checked for a series yet.
           </p>
-          {canSync && syncConfigured ? <FindSeriesButton libraryId={libraryId} /> : syncNote}
+          {activeJob ? null : canSync && syncConfigured ? <FindSeriesButton libraryId={libraryId} /> : syncNote}
         </div>
       )}
       {withGaps.length > 0 && <SeriesSection libraryId={libraryId} gaps={withGaps} canEdit={canEditLibrary} canRefresh={syncConfigured && canSync} />}
@@ -161,7 +168,11 @@ async function SeriesPanel({ libraryId, userId, role }: { libraryId: string; use
   } catch {
     failed = true;
   }
-  return <SeriesBody libraryId={libraryId} overview={overview} failed={failed} canEditLibrary={canEdit(role)} syncConfigured={syncConfigured} canSync={fullAccess} />;
+  const job = await loadActiveSeriesJob(supabase, libraryId);
+  const activeJob = job
+    ? { id: job.id, status: (job.status === "queued" ? "queued" : "running") as "queued" | "running", processed: job.processed, total: job.total, canCancel: role === "owner" || job.userId === userId }
+    : null;
+  return <SeriesBody libraryId={libraryId} overview={overview} failed={failed} canEditLibrary={canEdit(role)} syncConfigured={syncConfigured} canSync={fullAccess} activeJob={activeJob} />;
 }
 
 /** The latest set of a scope, minus what is declined or already on the shelves, and today's refresh allowance. */
@@ -217,32 +228,40 @@ async function SharedSection({ libraryId, userId, role }: { libraryId: string; u
   return <RecSection libraryId={libraryId} scope="shared" state={state} {...data} canEdit={canEdit(role)} readOnly={!fullAccess} />;
 }
 
-export default async function Page() {
-  const { user, current } = await getLibraryContext();
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const [{ user, current }, search] = await Promise.all([getLibraryContext(), searchParams]);
   if (!current) return null; // The layout shows the create-library prompt.
+  const tab = parseTab(search.tab);
 
-  // The page shell renders at once; each section streams in when its own data is ready, and they load in parallel.
+  // The page shell renders at once. Only the open tab's section is rendered, so the other tabs' queries do not run.
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <PageHeader eyebrow="What to read next" title="Discover" lede="Fill the gaps in the series you own, then find something new." />
+      <DiscoverTabs active={tab} />
 
-      <SectionPanel index={1} title="Complete your series" lede="Volumes missing from the series on your shelves. Unreleased books and box sets are left out.">
-        <Suspense fallback={<BodySkeleton cards={1} />}>
-          <SeriesPanel libraryId={current.id} userId={user.id} role={current.role} />
-        </Suspense>
-      </SectionPanel>
+      {tab === "series" && (
+        <SectionPanel tab="series" index={1} title="Complete your series" lede="Volumes missing from the series on your shelves. Unreleased books and box sets are left out.">
+          <Suspense fallback={<BodySkeleton cards={1} />}>
+            <SeriesPanel libraryId={current.id} userId={user.id} role={current.role} />
+          </Suspense>
+        </SectionPanel>
+      )}
 
-      <SectionPanel index={2} title="For you" lede="Picks from what your shelves hold and what you have rated, grouped by how they were chosen, each with the reason it was picked.">
-        <Suspense fallback={<BodySkeleton />}>
-          <PersonalSection libraryId={current.id} userId={user.id} role={current.role} />
-        </Suspense>
-      </SectionPanel>
+      {tab === "you" && (
+        <SectionPanel tab="you" index={2} title="For you" lede="Picks from what your shelves hold and what you have rated, grouped by how they were chosen, each with the reason it was picked.">
+          <Suspense fallback={<BodySkeleton />}>
+            <PersonalSection libraryId={current.id} userId={user.id} role={current.role} />
+          </Suspense>
+        </SectionPanel>
+      )}
 
-      <SectionPanel index={3} title="For both of you" lede="Books the two of you would likely both enjoy, based on your ratings. Your notes are never used here.">
-        <Suspense fallback={<BodySkeleton />}>
-          <SharedSection libraryId={current.id} userId={user.id} role={current.role} />
-        </Suspense>
-      </SectionPanel>
+      {tab === "both" && (
+        <SectionPanel tab="both" index={3} title="For both of you" lede="Books the two of you would likely both enjoy, based on your ratings. Your notes are never used here.">
+          <Suspense fallback={<BodySkeleton />}>
+            <SharedSection libraryId={current.id} userId={user.id} role={current.role} />
+          </Suspense>
+        </SectionPanel>
+      )}
     </div>
   );
 }

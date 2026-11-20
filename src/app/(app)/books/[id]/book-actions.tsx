@@ -11,6 +11,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import type { BookRow } from "@/lib/books/data";
 import { RATING_SOURCE_LABEL, type Ownership } from "@/lib/books/constants";
 import type { BookMetadata } from "@/lib/metadata/types";
+import type { SeriesOption } from "@/lib/books/series-suggest";
 import { cn } from "@/lib/utils";
 
 function draftFromBook(b: BookRow): BookDraft {
@@ -34,7 +35,7 @@ function draftFromBook(b: BookRow): BookDraft {
 }
 
 /** Editor-only controls: refresh metadata, edit details, change the cover. */
-export function BookActions({ book }: { book: BookRow }) {
+export function BookActions({ book, seriesOptions }: { book: BookRow; seriesOptions?: SeriesOption[] }) {
   const [sheet, setSheet] = useState<"details" | "cover" | null>(null);
   const [message, setMessage] = useState<{ text: string; tone: "ok" | "error" } | null>(null);
   const [pending, startTransition] = useTransition();
@@ -65,13 +66,13 @@ export function BookActions({ book }: { book: BookRow }) {
           {message.text}
         </p>
       )}
-      {sheet === "details" && <DetailsSheet book={book} onClose={() => setSheet(null)} />}
+      {sheet === "details" && <DetailsSheet book={book} seriesOptions={seriesOptions} onClose={() => setSheet(null)} />}
       {sheet === "cover" && <CoverSheet book={book} onClose={() => setSheet(null)} />}
     </div>
   );
 }
 
-function DetailsSheet({ book, onClose }: { book: BookRow; onClose: () => void }) {
+function DetailsSheet({ book, seriesOptions, onClose }: { book: BookRow; seriesOptions?: SeriesOption[]; onClose: () => void }) {
   const [draft, setDraft] = useState(() => draftFromBook(book));
   const [ownership, setOwnership] = useState<Ownership>(book.ownership);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +111,7 @@ function DetailsSheet({ book, onClose }: { book: BookRow; onClose: () => void })
                 ))}
               </div>
             </fieldset>
-            <BookFields draft={draft} onChange={setDraft} />
+            <BookFields draft={draft} onChange={setDraft} seriesOptions={seriesOptions} />
             {error && (
               <p role="alert" className="text-sm text-destructive">
                 {error}

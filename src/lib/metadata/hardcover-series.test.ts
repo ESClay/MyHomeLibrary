@@ -4,6 +4,7 @@ import duneFixture from "./__fixtures__/hardcover-series-dune.json";
 import searchFixture from "./__fixtures__/hardcover-series-search.json";
 import witcherFixture from "./__fixtures__/hardcover-series-witcher.json";
 import {
+  pickBookMatch,
   chooseSeriesRef,
   isCompilationEntry,
   normalizeBookSeries,
@@ -144,5 +145,21 @@ describe("series search", () => {
 
   it("matches on name alone when the author is unknown", () => {
     expect(pickSeriesHit(hits, { name: "The Witcher", author: null })?.hardcoverId).toBe(1808);
+  });
+});
+
+describe("pickBookMatch", () => {
+  const dune = { hardcoverId: 11, title: "Dune (Dune, #1)", authors: ["Brian Herbert", "Frank Herbert"] };
+  it("needs the same title and the same first author", () => {
+    expect(pickBookMatch([dune], { title: "Dune", author: "Herbert, Frank" })).toBe(dune);
+    expect(pickBookMatch([dune], { title: "dune", author: "Brian Herbert" })).toBe(dune);
+    expect(pickBookMatch([dune], { title: "Dune Messiah", author: "Frank Herbert" })).toBeNull();
+    expect(pickBookMatch([dune], { title: "Dune", author: "Frank Smith" })).toBeNull();
+    expect(pickBookMatch([{ ...dune, authors: ["Brian Herbert"] }], { title: "Dune", author: "Frank Herbert" })).toBeNull();
+  });
+  it("never guesses without an author, and allows a subtitle", () => {
+    expect(pickBookMatch([dune], { title: "Dune", author: null })).toBeNull();
+    const sub = { hardcoverId: 5, title: "Mistborn: The Final Empire", authors: ["Brandon Sanderson"] };
+    expect(pickBookMatch([sub], { title: "Mistborn", author: "Brandon Sanderson" })).toBe(sub);
   });
 });

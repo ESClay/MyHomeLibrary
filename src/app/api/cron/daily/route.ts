@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isAuthorizedCron } from "@/lib/cron";
+import { runJobsTick } from "@/lib/jobs/queue/tick";
 import { runDaily } from "@/lib/jobs/daily";
 import { priceRefreshTask, recommendationsTask, scanCleanupTask, seriesSyncTask, supabaseRunStore } from "@/lib/jobs/tasks";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -8,7 +9,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const maxDuration = 300;
 
 /** Leaves a margin under maxDuration for the last task to finish and the run to be recorded. */
-const BUDGET_MS = 270_000;
+const BUDGET_MS = 200_000;
+/** After the daily tasks, queued jobs get what is left (the fallback if pg_cron is off), up to this long. */
+const TICK_MAX_MS = 85_000;
 
 /**
  * GET /api/cron/daily (Authorization: Bearer $CRON_SECRET), called once a day by Vercel Cron. Runs whichever tasks are
@@ -27,6 +30,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY is not configured; no cron task can run." }, { status: 503 });
   }
   try {
+    const startedAt = Date.now();
     const result = await runDaily({
       store: supabaseRunStore(admin),
       runners: {
@@ -38,7 +42,15 @@ export async function GET(request: NextRequest) {
       env: process.env,
       budgetMs: BUDGET_MS,
     });
-    return NextResponse.json(result);
+    // The series task only queues work; this tick is the fallback that moves queued jobs along once a day.
+    let jobs: unknown = null;
+    try {
+      const left = Math.min(TICK_MAX_MS, 285_000 - (Date.now() - startedAt));
+      if (left > 10_000) jobs = await runJobsTick(admin, left);
+    } catch (e) {
+      jobs = { error: e instanceof Error ? e.message : "failed" };
+    }
+    return NextResponse.json({ ...result, jobs });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });
   }
