@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { Button } from "@/components/ui/button";
 import { EmptyState, PageHeader, SpineRow } from "@/components/shelf";
 import { countLibraryBooks, loadLibraryPageItems, loadSeriesNames } from "@/lib/books/data";
-import { PAGE_SIZE, parseLibraryParams } from "@/lib/books/library-query";
+import { PAGE_SIZE, SORTS, defaultDir, parseLibraryParams, type Sort } from "@/lib/books/library-query";
 import { getLibraryContext } from "@/lib/library";
 import { loadShelf } from "@/lib/shelves/data";
 import { canWriteShelf } from "@/lib/shelves/permissions";
@@ -18,10 +18,14 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   if (!current) return null; // The layout shows the create-library prompt.
 
   const search = await searchParams;
-  const params = parseLibraryParams(search);
   // "Edit rules" on a smart shelf comes here with ?editShelf=<id>; only a smart shelf this person may change counts.
   const editId = typeof search.editShelf === "string" && /^[0-9a-f-]{36}$/i.test(search.editShelf) ? search.editShelf : null;
   const supabase = await createClient();
+  // The saved sort is the fallback when the URL names none. A small read first, because the page query needs the params.
+  const { data: profile } = await supabase.from("profiles").select("library_sort, library_sort_dir").eq("id", user.id).maybeSingle();
+  const savedSort = SORTS.find((s) => s === profile?.library_sort);
+  const fallback = savedSort ? { sort: savedSort as Sort, dir: profile?.library_sort_dir === "desc" ? ("desc" as const) : profile?.library_sort_dir === "asc" ? ("asc" as const) : defaultDir(savedSort) } : null;
+  const params = parseLibraryParams(search, fallback);
   const [editing, page, librarySize, seriesNames, members, cookieStore] = await Promise.all([
     editId ? loadShelf(editId) : Promise.resolve(null),
     loadLibraryPageItems(current.id, user.id, params, { limit: PAGE_SIZE }),

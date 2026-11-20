@@ -7,7 +7,7 @@ import { Stars } from "@/components/stars";
 import { CoverLoanTag, LoanLine, LoanTag } from "@/components/loan-badge";
 import { Badge } from "@/components/ui/badge";
 import { primaryLoan } from "@/lib/loans/rules";
-import { STATUS_LABEL } from "@/lib/books/constants";
+import { CoverStatusMark, InlineStatusMark } from "@/components/status-mark";
 import type { LibraryItem } from "@/lib/books/library-query";
 import { cn } from "@/lib/utils";
 
@@ -64,11 +64,7 @@ export function BookGrid({ items, pending, selection, extra }: { items: LibraryI
                 <span className="absolute top-1.5 left-1.5 rounded-[3px] bg-gilt px-1.5 py-0.5 text-[0.625rem] font-semibold tracking-wider text-background uppercase">Wishlist</span>
               )}
               {primaryLoan(b.loans) && !selection?.on && <CoverLoanTag loan={primaryLoan(b.loans)!} />}
-              {b.mine?.status === "read" && !selection?.on && (
-                <span className="absolute right-1.5 bottom-1.5 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground" title="Read">
-                  <Check className="size-3" aria-label="Read" />
-                </span>
-              )}
+              <CoverStatusMark status={b.mine?.status} />
             </div>
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className="line-clamp-2 text-sm leading-snug font-medium group-hover:underline group-hover:decoration-gilt group-hover:underline-offset-2">{b.title}</span>
@@ -107,11 +103,8 @@ export function BookList({ items, pending, selection }: { items: LibraryItem[]; 
             <span className="flex shrink-0 flex-col items-end gap-1">
               {b.mine?.rating != null ? <Stars value={b.mine.rating} size={12} /> : null}
               {primaryLoan(b.loans) && <LoanTag loan={primaryLoan(b.loans)!} />}
-              {b.ownership === "wishlist" ? (
-                <Badge variant="secondary">Wishlist</Badge>
-              ) : b.mine ? (
-                <span className="text-xs text-muted-foreground">{STATUS_LABEL[b.mine.status]}</span>
-              ) : null}
+              {b.ownership === "wishlist" && <Badge variant="secondary">Wishlist</Badge>}
+              <InlineStatusMark status={b.mine?.status} />
             </span>
           </Tile>
         </li>

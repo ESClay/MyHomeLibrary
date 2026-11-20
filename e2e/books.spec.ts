@@ -76,3 +76,28 @@ test("typing in Add shows suggestions and picking an online match opens the conf
   await online.click();
   await expect(page.getByRole("dialog")).toBeVisible();
 });
+
+test("the chosen library sort is remembered across navigation and reloads", async ({ page }) => {
+  await page.goto("/sign-in");
+  await page.getByLabel("Email").fill(email!);
+  await page.getByLabel("Password").fill(password!);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.waitForURL("**/library");
+
+  const sort = page.getByLabel("Sort by");
+  await sort.selectOption({ label: "Title" });
+  await expect(page).toHaveURL(/sort=title/);
+  // The save is fire and forget; give it a moment before leaving the screen.
+  await page.waitForTimeout(1000);
+
+  await page.getByRole("link", { name: "Shelves" }).first().click();
+  await page.waitForURL("**/shelves");
+  await page.getByRole("link", { name: "Library" }).first().click();
+  await page.waitForURL("**/library**");
+  await expect(page.getByLabel("Sort by")).toHaveValue("title");
+
+  await page.goto("/library");
+  await expect(page.getByLabel("Sort by")).toHaveValue("title");
+  await page.reload();
+  await expect(page.getByLabel("Sort by")).toHaveValue("title");
+});

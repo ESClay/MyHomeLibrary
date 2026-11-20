@@ -214,7 +214,11 @@ export async function deleteBook(bookId: string): Promise<ActionResult> {
 }
 
 /** Re-fetches provider data. Fills gaps and updates series, rating, description and ids; keeps the title, authors and chosen cover. */
-export async function refreshMetadata(bookId: string): Promise<ActionResult<{ message: string }>> {
+export type RefreshResult =
+  | { ok: true; message: string; outcome: "updated" | "upToDate" }
+  | { ok: false; error: string; code?: "no_match" | "full_access_required" };
+
+export async function refreshMetadata(bookId: string): Promise<RefreshResult> {
   const parsed = z.string().uuid().safeParse(bookId);
   if (!parsed.success) return fail("That book id is not valid.");
   const auth = await authorizeBook(parsed.data, true);
@@ -224,7 +228,7 @@ export async function refreshMetadata(bookId: string): Promise<ActionResult<{ me
   if (!current) return fail("That book is not in your library.");
 
   const fresh = await refreshFor({ title: current.title, authors: current.authors ?? [], isbn13: current.isbn13 }, await providerPolicyFor(auth.supabase, auth.user.id));
-  if (!fresh) return fail("No provider returned a match. Try again later, or edit the details by hand.");
+  if (!fresh) return { ok: false, error: "No provider returned a match. Try again later, or edit the details by hand.", code: "no_match" };
 
   const patch: Record<string, unknown> = {};
   const fill = (column: string, value: unknown, empty: boolean) => {
@@ -251,11 +255,11 @@ export async function refreshMetadata(bookId: string): Promise<ActionResult<{ me
   if (fresh.ids.google) patch.google_books_id = fresh.ids.google;
   if (fresh.ids.openLibrary) patch.ol_key = fresh.ids.openLibrary;
 
-  if (Object.keys(patch).length === 0) return { ok: true, message: "Already up to date." };
+  if (Object.keys(patch).length === 0) return { ok: true, message: "Already up to date.", outcome: "upToDate" };
   const { error } = await auth.supabase.from("books").update(patch).eq("id", parsed.data);
   if (error) return fail(error.message);
   revalidateBook(parsed.data);
-  return { ok: true, message: `Updated from ${fresh.providers.join(", ")}.` };
+  return { ok: true, message: `Updated from ${fresh.providers.join(", ")}.`, outcome: "updated" };
 }
 
 // ---------------------------------------------------------------- copies

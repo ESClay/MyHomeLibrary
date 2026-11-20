@@ -7,7 +7,7 @@
 -- dave (owns Lib B; accepts an invite into Lib A mid-file),
 -- eve (member of nothing, ever).
 begin;
-select plan(209);
+select plan(214);
 
 -- ---------------------------------------------------------------- fixtures
 insert into auth.users (id, aud, role, email) values
@@ -639,6 +639,22 @@ select throws_ok($$insert into public.price_check_log (user_id) values ('b000000
 reset role;
 select is((select region from public.profiles where id = 'b0000000-0000-0000-0000-000000000002'),
   null, 'bob''s region was not touched by alice');
+
+-- profiles.library_sort: each person updates only their own, and only to a known sort
+select pg_temp.act_as('a0000000-0000-0000-0000-000000000001');
+select is(pg_temp.affected($$update public.profiles set library_sort = 'title', library_sort_dir = 'desc'
+                             where id = 'a0000000-0000-0000-0000-000000000001'$$),
+  1, 'a person can save their own library sort');
+select is(pg_temp.affected($$update public.profiles set library_sort = 'price'
+                             where id = 'b0000000-0000-0000-0000-000000000002'$$),
+  0, 'a person cannot change someone else''s library sort');
+select throws_ok($$update public.profiles set library_sort = 'bogus' where id = 'a0000000-0000-0000-0000-000000000001'$$,
+  '23514', null, 'library_sort must be a known sort');
+select throws_ok($$update public.profiles set library_sort_dir = 'up' where id = 'a0000000-0000-0000-0000-000000000001'$$,
+  '23514', null, 'library_sort_dir must be asc or desc');
+reset role;
+select is((select library_sort from public.profiles where id = 'b0000000-0000-0000-0000-000000000002'),
+  null, 'bob''s library sort was not touched by alice');
 
 -- Lending as an editor (bob)
 select pg_temp.act_as('b0000000-0000-0000-0000-000000000002');
