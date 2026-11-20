@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { BackLink } from "./back-link";
 import { Avatar } from "@/components/avatar";
 import { Cover } from "@/components/cover";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,7 @@ import { Stars } from "@/components/stars";
 import { hasFullAccess } from "@/lib/access";
 import { canEdit } from "@/lib/books/access";
 import { OWNERSHIP_LABEL, RATING_SOURCE_LABEL, STATUS_LABEL } from "@/lib/books/constants";
-import { loadBookDetail } from "@/lib/books/data";
+import { loadAuthorVariants, loadBookDetail, loadSeriesOptions } from "@/lib/books/data";
 import { LoanLine, LoanTag } from "@/components/loan-badge";
 import { timesRead } from "@/lib/format";
 import { activeLoans } from "@/lib/loans/rules";
@@ -19,6 +19,7 @@ import { getLibraryContext } from "@/lib/library";
 import { createClient } from "@/lib/supabase/server";
 import { loadShelvesForBook } from "@/lib/shelves/data";
 import { canChangeShelfBooks } from "@/lib/shelves/permissions";
+import { AuthorLine } from "./author-line";
 import { BookActions, DeleteBook } from "./book-actions";
 import { BookShelves } from "./book-shelves";
 import { BorrowedReturn } from "./borrowed-return";
@@ -44,7 +45,9 @@ export default async function BookPage({ params }: Props) {
   if (!detail) notFound();
 
   const { book, copies, me, others, role, loans, priceHistory, priceRegion } = detail;
-  const borrowers = canEdit(role) ? await loadBorrowers(book.library_id) : [];
+  const [borrowers, seriesOptions, authorGroups] = canEdit(role)
+    ? await Promise.all([loadBorrowers(book.library_id), loadSeriesOptions(book.library_id), loadAuthorVariants(book.library_id)])
+    : [[], [], []];
   const now = new Date();
   const active = activeLoans(loans, now);
   const borrowedLoan = book.ownership === "borrowed" ? (active.find((l) => l.direction === "in") ?? null) : null;
@@ -55,12 +58,7 @@ export default async function BookPage({ params }: Props) {
 
   return (
     <article className="mx-auto flex w-full max-w-5xl flex-col gap-8">
-      <Link
-        href="/library"
-        className="-ml-2 flex h-11 w-fit items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" aria-hidden /> Library
-      </Link>
+      <BackLink />
 
       <header className="rise grid gap-6 md:grid-cols-[13rem_1fr] md:gap-10">
         <div className="mx-auto flex w-44 flex-col gap-0 md:mx-0 md:w-full">
@@ -78,7 +76,7 @@ export default async function BookPage({ params }: Props) {
             )}
             <h1 className="page-title">{book.title}</h1>
             {book.subtitle && <p className="font-display text-xl text-muted-foreground">{book.subtitle}</p>}
-            <p className="text-base">{book.authors.join(", ") || "Unknown author"}</p>
+            <AuthorLine authors={book.authors} libraryId={book.library_id} canEdit={canEdit(role)} groups={authorGroups} />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -114,7 +112,7 @@ export default async function BookPage({ params }: Props) {
 
           {editor && borrowedLoan && <BorrowedReturn bookId={book.id} title={book.title} />}
 
-          {editor && <BookActions book={book} />}
+          {editor && <BookActions book={book} seriesOptions={seriesOptions} />}
         </div>
       </header>
 

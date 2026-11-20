@@ -38,7 +38,6 @@ export function AuthForm({ mode, next }: { mode: "sign-in" | "sign-up"; next: st
           required
           minLength={6}
           autoComplete={isSignUp ? "new-password" : "current-password"}
-         
         />
       </div>
       {isSignUp && <RegionSelect />}
@@ -47,13 +46,16 @@ export function AuthForm({ mode, next }: { mode: "sign-in" | "sign-up"; next: st
           {state.error}
         </p>
       )}
-      {state.message && <p className="text-sm text-muted-foreground">{state.message}</p>}
+      {state.message && <p role="status" className="text-sm text-muted-foreground">{state.message}</p>}
+      <p role="status" aria-live="polite" className="sr-only">
+        {pending ? (isSignUp ? "Creating your account" : "Signing you in") : ""}
+      </p>
       <Button type="submit" size="lg" disabled={pending}>
         {pending ? "Please wait…" : isSignUp ? "Create account" : "Sign in"}
       </Button>
       <p className="text-center text-sm text-muted-foreground">
         {isSignUp ? "Already have an account? " : "New here? "}
-        <Link href={`${isSignUp ? "/sign-in" : "/sign-up"}${nextQuery}`} className="font-medium text-foreground underline decoration-gilt decoration-2 underline-offset-4 transition-colors hover:decoration-foreground">
+        <Link href={`${isSignUp ? "/sign-in" : "/sign-up"}${nextQuery}`} className="inline-flex min-h-11 items-center rounded-sm font-medium text-foreground underline decoration-gilt decoration-2 underline-offset-4 transition-colors hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
           {isSignUp ? "Sign in" : "Create an account"}
         </Link>
       </p>

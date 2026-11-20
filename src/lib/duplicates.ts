@@ -40,6 +40,7 @@ export type ExistingBook = {
   isbn13: string | null;
   /** edition_isbn of every copy of the book */
   copyIsbns: string[];
+  coverUrl?: string | null;
 };
 
 export type DuplicateCandidate = {

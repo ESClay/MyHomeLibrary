@@ -13,6 +13,12 @@ const literata = Literata({
 export const metadata: Metadata = {
   title: { default: "MyHomeLibrary", template: "%s · MyHomeLibrary" },
   description: "Catalog and share your home library.",
+  openGraph: {
+    type: "website",
+    siteName: "MyHomeLibrary",
+    title: "MyHomeLibrary",
+    description: "Catalog and share your home library.",
+  },
   appleWebApp: { capable: true, title: "MyHomeLibrary", statusBarStyle: "default" },
 };
 

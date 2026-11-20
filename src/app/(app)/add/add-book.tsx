@@ -1,5 +1,6 @@
 "use client";
 
+import type { SeriesOption } from "@/lib/books/series-suggest";
 import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BookCheck, PenLine, Search } from "lucide-react";
@@ -23,7 +24,7 @@ async function fetchMetadata(params: string, signal?: AbortSignal): Promise<Book
   return body.results;
 }
 
-export function AddBook({ libraryId, fullAccess, manualIsbn = null, borrowers, currency }: { libraryId: string; fullAccess: boolean; manualIsbn?: string | null; borrowers: BorrowerOption[]; currency: string | null }) {
+export function AddBook({ libraryId, fullAccess, manualIsbn = null, borrowers, currency, seriesOptions }: { libraryId: string; fullAccess: boolean; manualIsbn?: string | null; borrowers: BorrowerOption[]; currency: string | null; seriesOptions?: SeriesOption[] }) {
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [results, setResults] = useState<BookMetadata[]>([]);
@@ -225,7 +226,7 @@ export function AddBook({ libraryId, fullAccess, manualIsbn = null, borrowers, c
         </Button>
       </div>
 
-      {sheet && <ConfirmSheet key={sheet.candidate?.isbn13 ?? sheet.candidate?.title ?? "manual"} libraryId={libraryId} borrowers={borrowers} currency={currency} candidate={sheet.candidate} initialIsbn={sheet.isbn} onClose={() => setSheet(null)} />}
+      {sheet && <ConfirmSheet key={sheet.candidate?.isbn13 ?? sheet.candidate?.title ?? "manual"} libraryId={libraryId} borrowers={borrowers} currency={currency} seriesOptions={seriesOptions} candidate={sheet.candidate} initialIsbn={sheet.isbn} onClose={() => setSheet(null)} />}
     </div>
   );
 }

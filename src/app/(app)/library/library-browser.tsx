@@ -1,16 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookCheck, BookmarkPlus, CheckSquare, LayoutGrid, List, Loader2, PencilLine, RefreshCw, Rows3, Search, SlidersHorizontal, X } from "lucide-react";
+import { BookCheck, BookmarkPlus, CheckSquare, ChevronRight, LayoutGrid, List, Loader2, Merge, PencilLine, RefreshCw, Rows3, Search, SlidersHorizontal, X } from "lucide-react";
 import { BookGrid, BookList, type ViewMode } from "@/components/book-grid";
 import { AssignSheet } from "@/components/assign-sheet";
 import { BulkEditSheet } from "@/components/bulk-edit-sheet";
+import { MergeSheet } from "@/components/merge-sheet";
+import { MAX_MERGE_BOOKS, MIN_MERGE_BOOKS } from "@/lib/books/merge";
 import { NEW_SHELF, ShelfFormSheet } from "@/components/shelf-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { RenameAuthorSheet } from "@/components/rename-author-sheet";
+import { RenameSeriesSheet } from "@/components/rename-series-sheet";
+import type { AuthorVariantGroup } from "@/lib/books/author-variants";
+import type { SeriesOption } from "@/lib/books/series-suggest";
 import { NativeSelect } from "@/components/ui/native-select";
 import {
   FORMATS,
@@ -44,6 +50,7 @@ import { MAX_REFRESH_BOOKS, classifyRefresh, emptyTally, markedReadMessage, refr
 import { LOOKUP_GAP_MS } from "@/lib/calibre/limits";
 import { loadLibraryPage, saveLibrarySort } from "./actions";
 import { StatusGlyph } from "@/components/status-mark";
+import { clearLeftLibrary, loadFeed, markLeftLibrary, saveFeed, saveLibraryUrl, tabStorage } from "@/lib/books/library-memory";
 import { cn } from "@/lib/utils";
 
 export type { ViewMode };
@@ -70,6 +77,31 @@ const STATUS_CHIPS: { label: string; value: LibraryParams["my"]; status?: Status
   { label: "No status", value: "none" },
 ];
 
+/**
+ * Puts the page back at `y` and keeps it there for a moment: Next scrolls a freshly pushed page to the top
+ * after our layout effect, so the position is re-applied until the person scrolls or the page settles.
+ */
+function holdScroll(y: number) {
+  let touched = false;
+  const events = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+  const stop = () => {
+    touched = true;
+  };
+  for (const e of events) window.addEventListener(e, stop, { passive: true, once: true });
+  const apply = () => {
+    if (!touched && Math.abs(window.scrollY - y) > 2) window.scrollTo({ top: y, behavior: "instant" });
+  };
+  window.scrollTo({ top: y, behavior: "instant" });
+  requestAnimationFrame(() => {
+    apply();
+    requestAnimationFrame(apply);
+  });
+  window.setTimeout(() => {
+    apply();
+    for (const e of events) window.removeEventListener(e, stop);
+  }, 300);
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 type Feed = { sig: string; extra: LibraryItem[]; hasMore: boolean; status: "idle" | "loading" | "error" };
@@ -81,6 +113,8 @@ export function LibraryBrowser({
   librarySize,
   params,
   seriesNames,
+  seriesOptions,
+  authorGroups,
   hasPartners,
   initialView,
   libraryId,
@@ -94,6 +128,10 @@ export function LibraryBrowser({
   librarySize: number;
   params: LibraryParams;
   seriesNames: string[];
+  /** (series, author) pairs, so a rename can be limited to one author. */
+  seriesOptions: SeriesOption[];
+  /** Authors written more than one way, for the spelling line in the filters. */
+  authorGroups: AuthorVariantGroup[];
   hasPartners: boolean;
   initialView: ViewMode;
   libraryId: string;
@@ -112,6 +150,7 @@ export function LibraryBrowser({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [assign, setAssign] = useState<"add" | "remove" | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const [marking, setMarking] = useState(false);
   const [run, setRun] = useState<{ at: number; total: number } | null>(null);
   const stopRun = useRef(false);
@@ -125,6 +164,8 @@ export function LibraryBrowser({
   }, []);
   const canEditBooks = role === "owner" || role === "editor";
   const [smartOpen, setSmartOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [fixingAuthor, setFixingAuthor] = useState<AuthorVariantGroup | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [ruleError, setRuleError] = useState<string | null>(null);
   const hasRules = filters > 0 || !!params.q;
@@ -136,10 +177,84 @@ export function LibraryBrowser({
   const items = feed.extra.length ? [...firstPage, ...feed.extra] : firstPage;
   const sentinel = useRef<HTMLDivElement>(null);
   const inFlight = useRef(false);
-  const latest = useRef({ sig, count: items.length, params });
+  const latest = useRef({ sig, count: items.length, params, extra: feed.extra, hasMore: feed.hasMore });
   useEffect(() => {
-    latest.current = { sig, count: items.length, params };
+    latest.current = { sig, count: items.length, params, extra: feed.extra, hasMore: feed.hasMore };
   });
+
+  // Coming back from a book: put the loaded pages back, then the scroll position (see library-memory.ts).
+  const restore = useRef<{ y: number; need: number } | null>(null);
+  const bookOpened = useRef(false);
+  useLayoutEffect(() => {
+    const store = tabStorage();
+    clearLeftLibrary(store);
+    const snap = loadFeed(store, sig);
+    if (!snap || !snap.bookClick) return;
+    const seen = new Set(firstPage.map((i) => i.id));
+    const extra = snap.extra.filter((i) => !seen.has(i.id));
+    restore.current = { y: snap.scrollY, need: extra.length };
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- storage only exists on the client, so this can't be the initial state
+    if (extra.length) setFeed((f) => (f.sig === sig ? { ...f, extra, hasMore: snap.hasMore } : f));
+    // Only on arrival: later changes of the list are the person's own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useLayoutEffect(() => {
+    const r = restore.current;
+    if (!r || feed.extra.length < r.need) return;
+    restore.current = null;
+    holdScroll(r.y);
+  }, [feed.extra.length]);
+
+  const remember = useCallback((bookClick: boolean) => {
+    const l = latest.current;
+    saveFeed(tabStorage(), { sig: l.sig, extra: l.extra, hasMore: l.hasMore, scrollY: window.scrollY, bookClick });
+  }, []);
+  useEffect(() => {
+    const onHide = () => remember(true);
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, [remember]);
+  const here = libraryHref(params);
+  useEffect(() => saveLibraryUrl(tabStorage(), here), [here]);
+
+  /** A book link is about to open: keep the list and the position, and note that the previous page is the library. */
+  function onListClickCapture(e: React.MouseEvent) {
+    if (selecting || e.button !== 0) return;
+    const a = (e.target as Element).closest?.('a[href^="/books/"]');
+    if (!a) return;
+    const newTab = e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
+    remember(true);
+    if (newTab) return;
+    bookOpened.current = true;
+    markLeftLibrary(tabStorage());
+  }
+
+  // Status chips: which sides of the row have more to scroll to.
+  const chipRow = useRef<HTMLDivElement>(null);
+  const [chipMore, setChipMore] = useState({ left: false, right: false });
+  useEffect(() => {
+    const el = chipRow.current;
+    if (!el) return;
+    const update = () => {
+      const left = el.scrollLeft > 4;
+      const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
+      setChipMore((m) => (m.left === left && m.right === right ? m : { left, right }));
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, []);
+  function nudgeChips() {
+    const el = chipRow.current;
+    if (!el) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollBy({ left: el.clientWidth * 0.7, behavior: reduce ? "auto" : "smooth" });
+  }
 
   const loadMore = useCallback(async () => {
     if (inFlight.current) return;
@@ -341,10 +456,13 @@ export function LibraryBrowser({
         </Button>
       </div>
 
+      <div className="relative -mx-4 md:mx-0">
       <div
+        ref={chipRow}
         role="group"
         aria-label="My reading status"
-        className="-mx-4 flex gap-2 overflow-x-auto overscroll-x-contain px-4 [mask-image:linear-gradient(to_right,transparent,black_1rem,black_calc(100%-1.5rem),transparent)] [scrollbar-width:none] md:mx-0 md:px-0 md:[mask-image:none] [&::-webkit-scrollbar]:hidden"
+        style={{ "--fade-l": chipMore.left ? "2.5rem" : "0px", "--fade-r": chipMore.right ? "3.5rem" : "0px" } as React.CSSProperties}
+        className="flex snap-x snap-proximity scroll-px-4 gap-2 overflow-x-auto overscroll-x-contain px-4 [mask-image:linear-gradient(to_right,transparent_0,black_var(--fade-l),black_calc(100%-var(--fade-r)),transparent_100%)] [scrollbar-width:none] md:px-0 md:[mask-image:none] [&::-webkit-scrollbar]:hidden"
       >
         {STATUS_CHIPS.map((c) => {
           const active = (params.my ?? null) === c.value;
@@ -355,7 +473,7 @@ export function LibraryBrowser({
               aria-pressed={active}
               onClick={() => go({ my: c.value })}
               className={cn(
-                "inline-flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-4 text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color] duration-[var(--dur-fast)] outline-none select-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                "inline-flex h-11 shrink-0 snap-start cursor-pointer items-center gap-1.5 rounded-full border px-4 text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color] duration-[var(--dur-fast)] outline-none select-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                 active ? "border-primary bg-primary text-primary-foreground" : "border-input bg-card text-foreground hover:border-foreground/40 hover:bg-accent",
               )}
             >
@@ -365,9 +483,23 @@ export function LibraryBrowser({
           );
         })}
       </div>
+      {chipMore.right && (
+        <button
+          type="button"
+          aria-hidden
+          tabIndex={-1}
+          onClick={nudgeChips}
+          className="group absolute top-0 right-0 flex size-11 cursor-pointer items-center justify-center outline-none md:hidden"
+        >
+          <span className="flex size-8 items-center justify-center rounded-full border border-input bg-card text-foreground shadow-sm transition-[background-color,transform] duration-[var(--dur-fast)] group-hover:bg-accent group-active:scale-95 motion-reduce:transition-none">
+            <ChevronRight className="size-4" aria-hidden />
+          </span>
+        </button>
+      )}
+      </div>
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:gap-x-3">
-        <p role="status" aria-live="polite" className={cn("order-first basis-full text-xs text-muted-foreground transition-opacity sm:order-none sm:mr-auto sm:basis-auto sm:text-sm", pending && "opacity-50")}>
+        <p role="status" aria-live="polite" className={cn("order-first basis-full max-sm:pt-2 text-xs text-muted-foreground transition-opacity sm:order-none sm:mr-auto sm:basis-auto sm:text-sm", pending && "opacity-50")}>
           {total === librarySize ? `${total} ${total === 1 ? "book" : "books"}` : `${total} of ${librarySize} books`}
         </p>
         <label className="flex min-w-0 flex-1 items-center gap-2 text-sm sm:flex-none [&>div]:min-w-0 [&>div]:flex-1 sm:[&>div]:w-44 sm:[&>div]:flex-none">
@@ -431,7 +563,7 @@ export function LibraryBrowser({
                 saveView(mode);
               }}
               className={cn(
-                "flex size-10 cursor-pointer items-center justify-center rounded-md transition-colors duration-[var(--dur-fast)]",
+                "flex size-11 cursor-pointer items-center justify-center rounded-md transition-colors duration-[var(--dur-fast)]",
                 view === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
               )}
             >
@@ -476,14 +608,21 @@ export function LibraryBrowser({
             <option value="owned">{OWNERSHIP_LABEL.owned}</option>
             <option value="wishlist">{OWNERSHIP_LABEL.wishlist}</option>
           </FilterSelect>
-          <FilterSelect label="Series" value={params.series ?? ""} onChange={(v) => go({ series: v || null })}>
-            <option value="">Any</option>
-            {seriesNames.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </FilterSelect>
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <FilterSelect label="Series" value={params.series ?? ""} onChange={(v) => go({ series: v || null })}>
+              <option value="">Any</option>
+              {seriesNames.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </FilterSelect>
+            {canEditBooks && params.series && (
+              <Button type="button" variant="outline" size="sm" className="h-11 w-fit" onClick={() => setRenaming(true)}>
+                <PencilLine aria-hidden /> Rename series
+              </Button>
+            )}
+          </div>
           <FilterSelect label="Lending" value={params.loan ?? ""} onChange={(v) => go({ loan: (v || null) as LoanFilter | null })}>
             <option value="">Any</option>
             {LOAN_FILTERS.map((l) => (
@@ -505,6 +644,25 @@ export function LibraryBrowser({
             ))}
             <option value="unrated">Not rated yet</option>
           </FilterSelect>
+          {authorGroups.length > 0 && (
+            <div className="flex flex-col gap-2 sm:col-span-2 lg:col-span-3">
+              <p className="text-sm font-semibold">
+                {authorGroups.length === 1 ? "1 author is" : `${authorGroups.length} authors are`} spelled more than one way
+              </p>
+              <ul className="flex flex-col gap-1">
+                {authorGroups.map((g) => (
+                  <li key={g.key} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <span className="min-w-0 text-sm text-muted-foreground">{g.spellings.map((s) => s.name).join(" / ")}</span>
+                    {canEditBooks && (
+                      <Button type="button" variant="outline" size="sm" className="h-11" onClick={() => setFixingAuthor(g)}>
+                        <PencilLine aria-hidden /> Fix spelling
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {filters > 0 && (
             <div className="sm:col-span-2 lg:col-span-3">
               <Button asChild variant="ghost" size="sm" className="h-11">
@@ -515,6 +673,42 @@ export function LibraryBrowser({
             </div>
           )}
         </section>
+      )}
+
+      {notice && (
+        <p role="status" className="panel px-4 py-3 text-sm">
+          {notice}
+        </p>
+      )}
+
+      {fixingAuthor && (
+        <RenameAuthorSheet
+          libraryId={libraryId}
+          author={fixingAuthor.spellings[fixingAuthor.spellings.length - 1].name}
+          suggested={fixingAuthor.spellings[0].name}
+          groups={authorGroups}
+          onClose={() => setFixingAuthor(null)}
+          onDone={(message) => {
+            setNotice(message);
+            startTransition(() => router.refresh());
+          }}
+        />
+      )}
+
+      {renaming && params.series && (
+        <RenameSeriesSheet
+          libraryId={libraryId}
+          series={params.series}
+          options={seriesOptions}
+          onClose={() => setRenaming(false)}
+          onDone={(newName, message) => {
+            setNotice(message);
+            startTransition(() => {
+              router.replace(hrefFor({ series: newName }), { scroll: false });
+              router.refresh();
+            });
+          }}
+        />
       )}
 
       {items.length === 0 ? (
@@ -529,9 +723,13 @@ export function LibraryBrowser({
           </Button>
         </div>
       ) : view === "grid" ? (
-        <BookGrid items={items} pending={pending} selection={selection} />
+        <div onClickCapture={onListClickCapture}>
+          <BookGrid items={items} pending={pending} selection={selection} />
+        </div>
       ) : (
-        <BookList items={items} pending={pending} selection={selection} />
+        <div onClickCapture={onListClickCapture}>
+          <BookList items={items} pending={pending} selection={selection} />
+        </div>
       )}
 
       {items.length > 0 && (
@@ -552,12 +750,6 @@ export function LibraryBrowser({
           )}
           {!feed.hasMore && total > firstPage.length && <p>That is all {total} books.</p>}
         </div>
-      )}
-
-      {notice && (
-        <p role="status" className="panel px-4 py-3 text-sm">
-          {notice}
-        </p>
       )}
 
       {selecting && (
@@ -612,6 +804,11 @@ export function LibraryBrowser({
               <Button type="button" variant="outline" className={BAR_SECONDARY} disabled={selected.size === 0 || marking} onClick={() => setAssign("remove")}>
                 Remove from shelf
               </Button>
+              {canEditBooks && selected.size >= MIN_MERGE_BOOKS && selected.size <= MAX_MERGE_BOOKS && (
+                <Button type="button" variant="outline" className={BAR_SECONDARY} disabled={marking} onClick={() => setMergeOpen(true)}>
+                  <Merge aria-hidden /> Merge
+                </Button>
+              )}
               {canEditBooks && (
                 <Button type="button" variant="outline" className={BAR_SECONDARY} disabled={selected.size === 0 || marking} onClick={() => void refreshSelected()}>
                   <RefreshCw aria-hidden /> Refresh<span className="sr-only sm:not-sr-only"> metadata</span>
@@ -628,6 +825,18 @@ export function LibraryBrowser({
           bookIds={[...selected]}
           canEditCopies={canEditBooks}
           onClose={() => setEditOpen(false)}
+          onDone={(m) => {
+            setNotice(m);
+            stopSelecting();
+          }}
+        />
+      )}
+
+      {mergeOpen && (
+        <MergeSheet
+          libraryId={libraryId}
+          bookIds={[...selected]}
+          onClose={() => setMergeOpen(false)}
           onDone={(m) => {
             setNotice(m);
             stopSelecting();

@@ -1,7 +1,8 @@
 import "server-only";
 import { createPacer, type Pacer, type PacerState } from "@/lib/calibre/pacer";
 import { normalizeTitle, authorSurname } from "@/lib/duplicates";
-import { hardcoverConfigured, hardcoverQuery } from "./hardcover";
+import { cleanTitle } from "@/lib/discover/match";
+import { hardcover, hardcoverConfigured, hardcoverQuery } from "./hardcover";
 import { num, pickIsbns, posInt, str, uniqueStrings } from "./util";
 
 /*
@@ -295,6 +296,56 @@ export function chooseSeriesRef(refs: BookSeriesRef[], seriesName: string | null
   return usable.find((r) => r.featured) ?? null;
 }
 
+// ---------------------------------------------------------------- finding a book on Hardcover
+
+/** A Hardcover book found by ISBN or search. */
+export type BookCandidate = { hardcoverId: number; title: string; authors: string[] };
+
+const titleKey = (t: string) => normalizeTitle(cleanTitle(t));
+
+const words = (s: string) =>
+  s
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .filter(Boolean);
+
+/** Surname and first initial of "First Last" or "Last, First"; the initial is "" when there is no given name. */
+function nameKey(author: string): { surname: string; initial: string } {
+  const comma = author.indexOf(",");
+  const w = comma > 0 ? [...words(author.slice(comma + 1)), ...words(author.slice(0, comma))] : words(author);
+  return { surname: w[w.length - 1] ?? "", initial: w.length > 1 ? w[0][0] : "" };
+}
+
+/** Same person by surname, and by first initial when both names give one ("Frank Herbert" is not "Brian Herbert"). */
+function sameAuthor(a: string, b: string): boolean {
+  const x = nameKey(a);
+  const y = nameKey(b);
+  return x.surname !== "" && x.surname === y.surname && (x.initial === "" || y.initial === "" || x.initial === y.initial);
+}
+
+/**
+ * The search result that is confidently the book asked for, else null (never a guess). Needs the same title (case,
+ * accents, punctuation, a leading article and a trailing "(Series, #1)" ignored; a subtitle after a colon on either side
+ * is allowed) AND the same first author (surname, and first initial when both give one) among the candidate's authors. A book with no author on file cannot be
+ * matched by title alone, so it is skipped. The first (best ranked) fitting result wins.
+ */
+export function pickBookMatch(cands: BookCandidate[], want: { title: string; author: string | null }): BookCandidate | null {
+  const author = want.author?.trim() ?? "";
+  const title = titleKey(want.title);
+  if (!nameKey(author).surname || !title) return null;
+  const head = (t: string) => titleKey(t.split(":")[0] ?? t);
+  return (
+    cands.find((c) => {
+      const ct = titleKey(c.title);
+      const titleOk = ct === title || head(c.title) === title || ct === head(want.title);
+      return titleOk && c.authors.some((a) => sameAuthor(a, author));
+    }) ?? null
+  );
+}
+
 // ---------------------------------------------------------------- requests (paced)
 
 /** Spacing between requests, so a sync stays near 54/min, under the 60/min limit and well under the burst of 10. */
@@ -313,7 +364,15 @@ export type SeriesApi = {
   seriesBooks(id: number): Promise<SeriesData | null>;
   /** Series search (one request). */
   searchSeries(query: string): Promise<SeriesSearchHit[]>;
+  /** The Hardcover book with this ISBN-13 (one request), or null. */
+  bookByIsbn(isbn13: string): Promise<BookCandidate | null>;
+  /** Book search by free text (one request), best match first. */
+  searchBooks(query: string): Promise<BookCandidate[]>;
 };
+
+function candidate(m: { title: string | null; authors: string[]; ids: { hardcover?: number } } | null): BookCandidate | null {
+  return m?.title && m.ids.hardcover ? { hardcoverId: m.ids.hardcover, title: m.title, authors: m.authors } : null;
+}
 
 const SERIES_TTL_MS = 30 * 60 * 1000;
 
@@ -336,5 +395,13 @@ export const hardcoverSeriesApi: SeriesApi = {
   async searchSeries(query) {
     const data = await hardcoverQuery(SERIES_SEARCH_QUERY, { q: query, n: 8 }, { timeoutMs: 15000, ttlMs: SERIES_TTL_MS });
     return normalizeSeriesSearch(obj(data?.search)?.results);
+  },
+
+  async bookByIsbn(isbn13) {
+    return candidate(await hardcover.lookupByIsbn(isbn13));
+  },
+
+  async searchBooks(query) {
+    return (await hardcover.search(query)).map(candidate).filter((c): c is BookCandidate => c !== null);
   },
 };

@@ -4,6 +4,8 @@ import type { LibraryRole } from "@/lib/library";
 import { activeLoans, type LoanLite } from "@/lib/loans/rules";
 import type { ExistingBook } from "@/lib/duplicates";
 import type { Condition, Format, Ownership, Status } from "./constants";
+import { findAuthorVariants, type AuthorVariantGroup } from "./author-variants";
+import type { SeriesOption } from "./series-suggest";
 import { PAGE_SIZE, queryTerms, type LibraryItem, type LibraryParams } from "./library-query";
 
 type Json = Record<string, unknown>;
@@ -148,6 +150,22 @@ export async function loadSeriesNames(libraryId: string): Promise<string[]> {
   const { data, error } = await supabase.rpc("library_series_names", { p_library_id: libraryId });
   if (error) throw new Error(error.message);
   return ((data ?? []) as string[]).sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+}
+
+/** Every (series, first author) pair in a library, for the series field's suggestions. */
+export async function loadSeriesOptions(libraryId: string): Promise<SeriesOption[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("library_series_by_author", { p_library_id: libraryId });
+  if (error) return [];
+  return ((data ?? []) as { series_name: string; author: string }[]).map((r) => ({ name: r.series_name, author: r.author ?? "" }));
+}
+
+/** Authors written more than one way in this library (spellings that differ only by case, accents, punctuation or spacing). */
+export async function loadAuthorVariants(libraryId: string): Promise<AuthorVariantGroup[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("library_authors", { p_library_id: libraryId });
+  if (error) return [];
+  return findAuthorVariants(((data ?? []) as { author: string; books: number | string }[]).map((r) => ({ name: r.author, books: Number(r.books) })));
 }
 
 export type BookRow = {
@@ -316,7 +334,7 @@ export async function loadDuplicateCandidates(
 ): Promise<ExistingBook[]> {
   const supabase = await createClient();
   const found = new Map<string, ExistingBook>();
-  const base = "id, title, authors, isbn13, copies(edition_isbn)";
+  const base = "id, title, authors, isbn13, cover_url, copies(edition_isbn)";
   const add = (rows: Json[] | null) => {
     for (const r of rows ?? []) {
       found.set(r.id as string, {
@@ -324,6 +342,7 @@ export async function loadDuplicateCandidates(
         title: r.title as string,
         authors: (r.authors as string[]) ?? [],
         isbn13: (r.isbn13 as string | null) ?? null,
+        coverUrl: (r.cover_url as string | null) ?? null,
         copyIsbns: ((r.copies as { edition_isbn: string | null }[]) ?? [])
           .map((c) => c.edition_isbn)
           .filter((s): s is string => !!s),

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SeriesApi } from "@/lib/metadata/hardcover-series";
-import { groupByNamedSeries, needsDiscovery, syncLibrarySeries } from "./series-sync";
+import { MAX_BOOK_LOOKUPS, groupByNamedSeries, needsDiscovery, syncLibrarySeries } from "./series-sync";
 
 type Row = Record<string, unknown>;
 
@@ -27,6 +27,7 @@ function fakeAdmin(tables: Record<string, Row[]>) {
       upsert: (p: Row[], o: { onConflict: string }) => ((op = "upsert"), (patch = p), (onConflict = o.onConflict), q),
       delete: () => ((op = "delete"), q),
       eq: (c: string, v: unknown) => (preds.push((r) => r[c] === v), filters.push(`${c}=${String(v)}`), q),
+      is: (c: string, v: unknown) => (preds.push((r) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)), q),
       in: (c: string, vs: unknown[]) => (preds.push((r) => vs.includes(r[c])), filters.push(`${c} in`), q),
       not: (c: string, o: string, v: unknown) => {
         if (o === "is") preds.push((r) => (v === null ? r[c] !== null && r[c] !== undefined : r[c] !== v));
@@ -62,7 +63,7 @@ function fakeAdmin(tables: Record<string, Row[]>) {
   return { client: { from } as unknown as SupabaseClient, calls, tables };
 }
 
-function api(over: Partial<SeriesApi> = {}): SeriesApi & { bookSeries: ReturnType<typeof vi.fn>; seriesBooks: ReturnType<typeof vi.fn>; searchSeries: ReturnType<typeof vi.fn> } {
+function api(over: Partial<SeriesApi> = {}): SeriesApi & { bookSeries: ReturnType<typeof vi.fn>; seriesBooks: ReturnType<typeof vi.fn>; searchSeries: ReturnType<typeof vi.fn>; bookByIsbn: ReturnType<typeof vi.fn>; searchBooks: ReturnType<typeof vi.fn> } {
   return {
     configured: () => true,
     bookSeries: vi.fn(async (ids: number[]) =>
@@ -80,16 +81,58 @@ function api(over: Partial<SeriesApi> = {}): SeriesApi & { bookSeries: ReturnTyp
       ],
     })),
     searchSeries: vi.fn(async () => []),
+    bookByIsbn: vi.fn(async () => null),
+    searchBooks: vi.fn(async () => []),
     ...over,
   } as never;
 }
 
 const LIB = "lib-a";
 const books = (): Row[] => [
-  { id: "b1", library_id: LIB, title: "Dune", authors: ["Frank Herbert"], series_id: null, series_name: null, hardcover_id: 1, series_checked_at: null },
-  { id: "b2", library_id: LIB, title: "Loose", authors: ["A"], series_id: null, series_name: null, hardcover_id: 2, series_checked_at: null },
-  { id: "other", library_id: "lib-b", title: "Other Library Book", authors: ["Z"], series_id: null, series_name: null, hardcover_id: 1, series_checked_at: null },
+  { id: "b1", library_id: LIB, title: "Dune", authors: ["Frank Herbert"], series_id: null, series_name: null, series_position: null, hardcover_id: 1, series_checked_at: null },
+  { id: "b2", library_id: LIB, title: "Loose", authors: ["A"], series_id: null, series_name: null, series_position: null, hardcover_id: 2, series_checked_at: null },
+  { id: "other", library_id: "lib-b", title: "Other Library Book", authors: ["Z"], series_id: null, series_name: null, series_position: null, hardcover_id: 1, series_checked_at: null },
 ];
+
+describe("syncLibrarySeries: series name and number on linked books", () => {
+  it("fills an empty series_name and series_position from the series and its entry", async () => {
+    const { client, tables } = fakeAdmin({ books: books(), series: [], series_entries: [] });
+    // hardcover id 11 is the entry at position 1 in the fake series
+    tables.books[0].hardcover_id = 11;
+    const a = api({ bookSeries: vi.fn(async () => [{ bookId: 11, title: null, series: [{ seriesId: 1150, name: "Dune", featured: true, position: 1, compilation: false }] }]) as never });
+    await syncLibrarySeries(client, LIB, { api: a });
+    const b1 = tables.books.find((b) => b.id === "b1")!;
+    expect(b1).toMatchObject({ series_name: "Dune", series_position: 1 });
+    expect(tables.books.find((b) => b.id === "other")!.series_name).toBeNull();
+  });
+
+  it("never overwrites a typed name or number, and fills only the missing one", async () => {
+    const { client, tables } = fakeAdmin({
+      books: [
+        { id: "t1", library_id: LIB, title: "A", authors: [], series_id: "s1", series_name: "My Dune", series_position: 7, hardcover_id: 11, series_checked_at: "x" },
+        { id: "t2", library_id: LIB, title: "B", authors: [], series_id: "s1", series_name: "My Dune", series_position: null, hardcover_id: 12, series_checked_at: "x" },
+      ],
+      series: [{ id: "s1", hardcover_id: 1150, name: "Dune", synced_at: new Date().toISOString() }],
+      series_entries: [
+        { id: "e1", series_id: "s1", hardcover_book_id: 11, position: 1 },
+        { id: "e2", series_id: "s1", hardcover_book_id: 12, position: 2 },
+      ],
+    });
+    await syncLibrarySeries(client, LIB, { api: api() });
+    expect(tables.books.find((b) => b.id === "t1")).toMatchObject({ series_name: "My Dune", series_position: 7 });
+    expect(tables.books.find((b) => b.id === "t2")).toMatchObject({ series_name: "My Dune", series_position: 2 });
+  });
+
+  it("treats an empty-string name as empty and leaves a book with no matching entry without a number", async () => {
+    const { client, tables } = fakeAdmin({
+      books: [{ id: "t1", library_id: LIB, title: "A", authors: [], series_id: "s1", series_name: "", series_position: null, hardcover_id: 99, series_checked_at: "x" }],
+      series: [{ id: "s1", hardcover_id: 1150, name: "Dune", synced_at: new Date().toISOString() }],
+      series_entries: [{ id: "e1", series_id: "s1", hardcover_book_id: 11, position: 1 }],
+    });
+    await syncLibrarySeries(client, LIB, { api: api() });
+    expect(tables.books[0]).toMatchObject({ series_name: "Dune", series_position: null });
+  });
+});
 
 describe("syncLibrarySeries", () => {
   it("files books under series, stores the entries, and stamps what it checked", async () => {
@@ -133,7 +176,7 @@ describe("syncLibrarySeries", () => {
   it("refreshes a stale series and drops entries Hardcover no longer lists", async () => {
     const old = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
     const { client, tables } = fakeAdmin({
-      books: [{ id: "b1", library_id: LIB, title: "Dune", authors: [], series_id: "s1", series_name: null, hardcover_id: 1, series_checked_at: old }],
+      books: [{ id: "b1", library_id: LIB, title: "Dune", authors: [], series_id: "s1", series_name: null, series_position: null, hardcover_id: 1, series_checked_at: old }],
       series: [{ id: "s1", hardcover_id: 1150, name: "Dune", synced_at: old }],
       series_entries: [{ id: "x", series_id: "s1", hardcover_book_id: 99, title: "Gone" }],
     });
@@ -147,8 +190,8 @@ describe("syncLibrarySeries", () => {
     const fresh = new Date().toISOString();
     const { client } = fakeAdmin({
       books: [
-        { id: "b1", library_id: LIB, title: "A", authors: [], series_id: "s1", series_name: null, hardcover_id: null, series_checked_at: fresh },
-        { id: "b2", library_id: LIB, title: "B", authors: [], series_id: "s2", series_name: null, hardcover_id: null, series_checked_at: fresh },
+        { id: "b1", library_id: LIB, title: "A", authors: [], series_id: "s1", series_name: null, series_position: null, hardcover_id: null, series_checked_at: fresh },
+        { id: "b2", library_id: LIB, title: "B", authors: [], series_id: "s2", series_name: null, series_position: null, hardcover_id: null, series_checked_at: fresh },
       ],
       series: [
         { id: "s1", hardcover_id: 1, name: "One", synced_at: fresh },
@@ -177,8 +220,8 @@ describe("syncLibrarySeries", () => {
     const slow = api({ seriesBooks: vi.fn(async () => { t += 60_000; return null; }) as never });
     const { client } = fakeAdmin({
       books: [
-        { id: "b1", library_id: LIB, title: "A", authors: [], series_id: "s1", series_name: null, hardcover_id: null, series_checked_at: "x" },
-        { id: "b2", library_id: LIB, title: "B", authors: [], series_id: "s2", series_name: null, hardcover_id: null, series_checked_at: "x" },
+        { id: "b1", library_id: LIB, title: "A", authors: [], series_id: "s1", series_name: null, series_position: null, hardcover_id: null, series_checked_at: "x" },
+        { id: "b2", library_id: LIB, title: "B", authors: [], series_id: "s2", series_name: null, series_position: null, hardcover_id: null, series_checked_at: "x" },
       ],
       series: [
         { id: "s1", hardcover_id: 1, name: "One", synced_at: null },
@@ -212,13 +255,101 @@ describe("syncLibrarySeries", () => {
   });
 });
 
+describe("syncLibrarySeries: books with no series, no series name and no Hardcover id", () => {
+  const bare = (over: Row = {}): Row => ({ id: "x1", library_id: LIB, title: "Dune", authors: ["Frank Herbert"], isbn13: null, series_id: null, series_name: null, series_position: null, hardcover_id: null, series_checked_at: null, ...over });
+  const duneLinks = async (ids: number[]) => ids.map((id) => ({ bookId: id, title: null, series: [{ seriesId: 1150, name: "Dune", featured: true, position: 1, compilation: false }] }));
+  const fixtures = () => ({ series: [], series_entries: [] });
+
+  it("matches by ISBN first, stores the Hardcover id, files the series and fills name and number", async () => {
+    const { client, tables } = fakeAdmin({ books: [bare({ isbn13: "9780441172719" })], ...fixtures() });
+    const a = api({ bookByIsbn: vi.fn(async () => ({ hardcoverId: 11, title: "Dune", authors: ["Frank Herbert"] })) as never, bookSeries: vi.fn(duneLinks) as never });
+    const res = await syncLibrarySeries(client, LIB, { api: a });
+    expect(a.bookByIsbn).toHaveBeenCalledWith("9780441172719");
+    expect(a.searchBooks).not.toHaveBeenCalled();
+    expect(a.bookSeries).toHaveBeenCalledWith([11]);
+    expect(res.linkedBooks).toBe(1);
+    expect(tables.books[0]).toMatchObject({ hardcover_id: 11, series_id: tables.series[0].id, series_name: "Dune", series_position: 1 });
+    expect(tables.books[0].series_checked_at).toBeTruthy();
+  });
+
+  it("falls back to title + first author, and accepts only a confident match", async () => {
+    const { client, tables } = fakeAdmin({
+      books: [bare({ id: "good" }), bare({ id: "wrong-author", title: "Dune", authors: ["Someone Else"] }), bare({ id: "no-author", title: "Dune", authors: [] })],
+      ...fixtures(),
+    });
+    const hits = [
+      { hardcoverId: 99, title: "Dune Messiah", authors: ["Frank Herbert"] }, // other title
+      { hardcoverId: 98, title: "Dune", authors: ["Brian Herbert"] }, // other author
+      { hardcoverId: 11, title: "Dune (Dune, #1)", authors: ["Frank Herbert"] },
+    ];
+    const a = api({ searchBooks: vi.fn(async () => hits) as never, bookSeries: vi.fn(duneLinks) as never });
+    await syncLibrarySeries(client, LIB, { api: a });
+    expect(a.searchBooks).toHaveBeenCalledWith("Dune Frank Herbert");
+    expect(a.searchBooks).toHaveBeenCalledTimes(2); // the book with no author is never searched: nothing to be sure by
+    expect(tables.books.find((b) => b.id === "good")).toMatchObject({ hardcover_id: 11, series_name: "Dune" });
+    expect(tables.books.find((b) => b.id === "wrong-author")!.hardcover_id).toBeNull();
+    expect(tables.books.find((b) => b.id === "no-author")!.hardcover_id).toBeNull();
+  });
+
+  it("a book with no match is still stamped as checked and is not asked about again", async () => {
+    const { client, tables } = fakeAdmin({ books: [bare({ isbn13: "9780000000002" })], ...fixtures() });
+    const a = api();
+    const res = await syncLibrarySeries(client, LIB, { api: a });
+    expect(a.bookByIsbn).toHaveBeenCalledTimes(1);
+    expect(a.searchBooks).toHaveBeenCalledTimes(1);
+    expect(tables.books[0].series_checked_at).toBeTruthy();
+    expect(tables.books[0].hardcover_id).toBeNull();
+    expect(res).toMatchObject({ done: true, remaining: 0 });
+    const again = api();
+    await syncLibrarySeries(client, LIB, { api: again });
+    expect(again.bookByIsbn).not.toHaveBeenCalled();
+    expect(again.searchBooks).not.toHaveBeenCalled();
+  });
+
+  it("never overwrites a typed series name, number or Hardcover id of another book", async () => {
+    const { client, tables } = fakeAdmin({
+      books: [
+        bare({ id: "typed", series_name: "", series_position: 7, series_checked_at: null }),
+        { ...bare({ id: "owner" }), hardcover_id: 11, series_checked_at: new Date().toISOString(), series_id: "s1", series_name: "My Dune", series_position: 3 },
+      ],
+      series: [{ id: "s1", hardcover_id: 1150, name: "Dune", synced_at: new Date().toISOString() }],
+      series_entries: [],
+    });
+    const a = api({ searchBooks: vi.fn(async () => [{ hardcoverId: 11, title: "Dune", authors: ["Frank Herbert"] }]) as never, bookSeries: vi.fn(duneLinks) as never });
+    await syncLibrarySeries(client, LIB, { api: a });
+    expect(tables.books.find((b) => b.id === "owner")).toMatchObject({ series_name: "My Dune", series_position: 3, hardcover_id: 11 });
+    // the id is already taken by another book (it is unique), so it is not stored, but the book still gets filed
+    expect(tables.books.find((b) => b.id === "typed")).toMatchObject({ hardcover_id: null, series_position: 7, series_name: "Dune" });
+  });
+
+  it("stops on a rate limit, leaves the book unstamped and reports it", async () => {
+    const { client, tables } = fakeAdmin({ books: [bare({ id: "a", isbn13: "9780441172719" }), bare({ id: "b" })], ...fixtures() });
+    const a = api({ bookByIsbn: vi.fn(async () => { throw new Error("HTTP 429"); }) as never });
+    const res = await syncLibrarySeries(client, LIB, { api: a });
+    expect(res).toMatchObject({ rateLimited: true, done: false });
+    expect(a.bookByIsbn).toHaveBeenCalledTimes(1);
+    expect(a.searchBooks).not.toHaveBeenCalled();
+    expect(tables.books.every((b) => b.series_checked_at === null)).toBe(true);
+  });
+
+  it("looks up at most MAX_BOOK_LOOKUPS books per run and carries the rest over", async () => {
+    const many = Array.from({ length: MAX_BOOK_LOOKUPS + 5 }, (_, i) => bare({ id: `m${i}`, title: `Book ${i}` }));
+    const { client, tables } = fakeAdmin({ books: many, ...fixtures() });
+    const a = api();
+    const res = await syncLibrarySeries(client, LIB, { api: a });
+    expect(a.searchBooks).toHaveBeenCalledTimes(MAX_BOOK_LOOKUPS);
+    expect(res).toMatchObject({ remaining: 5, done: false });
+    expect(tables.books.filter((b) => b.series_checked_at).length).toBe(MAX_BOOK_LOOKUPS);
+  });
+});
+
 describe("helpers", () => {
   const now = Date.now();
   it("decides which books need a series lookup", () => {
-    const base = { series_id: null, series_checked_at: null, hardcover_id: 5, series_name: null };
+    const base = { series_id: null, series_checked_at: null, hardcover_id: 5 };
     expect(needsDiscovery(base, now)).toBe(true);
     expect(needsDiscovery({ ...base, series_id: "s" }, now)).toBe(false);
-    expect(needsDiscovery({ ...base, hardcover_id: null }, now)).toBe(false);
+    expect(needsDiscovery({ ...base }, now)).toBe(true); // no series text and no Hardcover id: looked up by ISBN or title
     expect(needsDiscovery({ ...base, series_checked_at: new Date(now - 1000).toISOString() }, now)).toBe(false);
     expect(needsDiscovery({ ...base, series_checked_at: new Date(now - 40 * 86400000).toISOString() }, now)).toBe(true);
   });
