@@ -11,6 +11,8 @@ import { NativeSelect } from "@/components/ui/native-select";
 import type { GapEntry, SeriesGap } from "@/lib/discover/gaps";
 import { entryToMetadata } from "@/lib/discover/to-book";
 import { SERIES_SORTS, DEFAULT_SERIES_SORT, parseSeriesSort, viewSeries, type SeriesSort } from "@/lib/discover/series-view";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { cancelJob } from "@/app/(app)/activity/actions";
 import { refreshSeries, wishlistEntry } from "./actions";
 
 const TONES = ["bg-spine-1", "bg-spine-2", "bg-spine-3", "bg-spine-4", "bg-spine-5"] as const;
@@ -243,6 +245,53 @@ export function FindSeriesButton({ libraryId, label = "Find my series" }: { libr
       <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
         {message}
       </p>
+    </div>
+  );
+}
+
+/**
+ * Shown instead of the Find my series button while a lookup is queued or running: how far it has got, and Cancel.
+ * Re-reads the page every 10 seconds while the tab is open, so the count moves without a reload.
+ */
+export function SeriesJobStatus({ job, canCancel }: { job: { id: string; status: "queued" | "running"; processed: number; total: number }; canCancel: boolean }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const pct = job.total > 0 ? Math.min(100, Math.round((job.processed / job.total) * 100)) : 0;
+  const line = job.status === "queued" ? "Series lookup is waiting to start" : job.total > 0 ? `Looking up series: ${Math.min(job.processed, job.total)} of ${job.total} checked` : "Looking up series";
+  return (
+    <div className="flex flex-col gap-3 rounded-[10px] border border-gilt/50 bg-accent/40 p-4" role="status" aria-live="polite">
+      <AutoRefresh active />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <p className="text-base">{line}</p>
+          <div className="h-1.5 overflow-hidden rounded-full bg-accent" aria-hidden>
+            <div className="h-full rounded-full bg-gilt transition-[width] duration-[var(--dur)] ease-[var(--ease)]" style={{ width: `${Math.max(pct, 4)}%` }} />
+          </div>
+          <p className="text-sm text-muted-foreground">You can leave this page. Activity tells you when it is done.</p>
+        </div>
+        {canCancel && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending}
+            onClick={() =>
+              startTransition(async () => {
+                const res = await cancelJob(job.id);
+                if (res.ok) router.refresh();
+                else setError(res.error);
+              })
+            }
+          >
+            {pending ? "Cancelling…" : "Cancel lookup"}
+          </Button>
+        )}
+      </div>
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

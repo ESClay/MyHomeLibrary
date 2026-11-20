@@ -6,7 +6,8 @@ import { recordNoPrice, recordPrice } from "@/lib/pricing/record";
 import { runPriceRefresh, type Candidate } from "@/lib/pricing/refresh";
 import { grantedLibraryIds, grantedUserIds } from "@/lib/access";
 import { AccessDenied, CapReached, NotEnoughSignal, generateSet } from "@/lib/discover/recs";
-import { syncLibrarySeries } from "@/lib/discover/series-sync";
+import { countSeriesWork } from "@/lib/discover/series-sync";
+import { enqueueJob } from "./queue/enqueue";
 import type { RunStore, TaskRunner } from "./daily";
 import { ACTIVE_WINDOW_MS, pickDueTargets, type LastSet, type Membership } from "./rec-targets";
 import { cleanupScanBatch } from "./scan-cleanup";
@@ -62,40 +63,43 @@ export function scanCleanupTask(admin: SupabaseClient): TaskRunner {
   };
 }
 
-/** Walks the libraries in id order, re-syncing the stale series of each one that has a member with full access, until the time runs out (then resumes after the last finished library). */
+/**
+ * Walks the libraries in id order and queues a series_lookup job for each one with a member who has full access and
+ * work waiting (books to find a series for, or stale series). The queue's worker does the lookups (see
+ * lib/jobs/queue), so this finishes quickly; a library that already has an active job is left alone.
+ */
 export function seriesSyncTask(admin: SupabaseClient): TaskRunner {
   return async ({ deadline, cursor, now }) => {
     let after = (cursor as { after?: string } | null)?.after ?? "";
     let libraries = 0;
-    let syncedSeries = 0;
-    let linkedBooks = 0;
+    let queued = 0;
     const errors: string[] = [];
     // Hardcover is for libraries with at least one member who has full access; the rest are stepped over.
     const granted = await grantedLibraryIds(admin);
-    if (granted.size === 0) return { status: "complete", detail: { libraries: 0, syncedSeries: 0, linkedBooks: 0, skipped: "no library has a member with full access" } };
+    if (granted.size === 0) return { status: "complete", detail: { libraries: 0, queued: 0, skipped: "no library has a member with full access" } };
 
     for (;;) {
-      const { data, error } = await admin.from("libraries").select("id").gt("id", after).order("id").limit(10);
+      const { data, error } = await admin.from("libraries").select("id, owner_id").gt("id", after).order("id").limit(10);
       if (error) throw new Error(error.message);
-      if (!data || data.length === 0) return { status: "complete", detail: { libraries, syncedSeries, linkedBooks, errors: errors.slice(0, 5) } };
+      if (!data || data.length === 0) return { status: "complete", detail: { libraries, queued, errors: errors.slice(0, 5) } };
 
       for (const lib of data) {
-        if (!granted.has(lib.id as string)) {
-          after = lib.id as string;
+        const id = lib.id as string;
+        if (!granted.has(id)) {
+          after = id;
           continue;
         }
-        const left = deadline - now();
-        if (left < 15_000) return { status: "partial", cursor: { after }, detail: { libraries, syncedSeries, linkedBooks, reason: "out of time" } };
-        const res = await syncLibrarySeries(admin, lib.id as string, { budgetMs: left });
-        syncedSeries += res.syncedSeries;
-        linkedBooks += res.linkedBooks;
-        errors.push(...res.errors);
-        if (res.rateLimited || res.remaining > 0) {
-          // Stay on this library next time: the cursor is the one before it.
-          return { status: "partial", cursor: { after }, detail: { libraries, syncedSeries, linkedBooks, rateLimited: res.rateLimited, remaining: res.remaining } };
+        if (deadline - now() < 5_000) return { status: "partial", cursor: { after }, detail: { libraries, queued, reason: "out of time" } };
+        try {
+          if ((await countSeriesWork(admin, id)) > 0) {
+            const res = await enqueueJob(admin, { libraryId: id, userId: (lib.owner_id as string | null) ?? null, kind: "series_lookup" });
+            if (res.created) queued++;
+          }
+        } catch (e) {
+          errors.push(e instanceof Error ? e.message : "failed");
         }
         libraries++;
-        after = lib.id as string;
+        after = id;
       }
     }
   };

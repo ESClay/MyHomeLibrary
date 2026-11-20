@@ -38,6 +38,8 @@ const spies = vi.hoisted(() => ({
   identifyBooks: vi.fn(),
   generateSet: vi.fn(),
   syncLibrarySeries: vi.fn(),
+  enqueueJob: vi.fn(),
+  runJobsTick: vi.fn(),
   getEbayClient: vi.fn(),
   createAdminClient: vi.fn(),
   search: vi.fn(),
@@ -55,6 +57,9 @@ vi.mock("@/lib/discover/recs", () => ({
   NotEnoughSignal: class extends Error {},
 }));
 vi.mock("@/lib/discover/series-sync", () => ({ syncLibrarySeries: spies.syncLibrarySeries }));
+vi.mock("@/lib/jobs/queue/enqueue", () => ({ enqueueJob: spies.enqueueJob }));
+vi.mock("@/lib/jobs/queue/tick", () => ({ runJobsTick: spies.runJobsTick }));
+vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: (fn: () => unknown) => void fn() }));
 vi.mock("@/lib/metadata/hardcover", () => ({ hardcoverConfigured: () => true }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: spies.createAdminClient }));
 vi.mock("@/lib/pricing/ebay", () => ({
@@ -170,13 +175,25 @@ describe("series sync", () => {
     expect(spies.syncLibrarySeries).not.toHaveBeenCalled();
   });
 
-  it("refreshSeries syncs with full access", async () => {
+  it("refreshSeries queues a background job with full access and kicks one tick, without syncing inline", async () => {
     state.granted = true;
     spies.createAdminClient.mockReturnValue({});
-    spies.syncLibrarySeries.mockResolvedValue({ syncedSeries: 1, linkedBooks: 0, remaining: 0, errors: [], rateLimited: false });
+    spies.enqueueJob.mockResolvedValue({ job: { id: "j1" }, created: true });
+    spies.runJobsTick.mockResolvedValue({ jobs: [] });
     const { refreshSeries } = await load<typeof import("@/app/(app)/discover/actions")>("@/app/(app)/discover/actions");
     expect(await refreshSeries({ libraryId: LIB })).toMatchObject({ ok: true });
-    expect(spies.syncLibrarySeries).toHaveBeenCalledTimes(1);
+    expect(spies.enqueueJob).toHaveBeenCalledWith(expect.anything(), { libraryId: LIB, userId: USER, kind: "series_lookup" });
+    expect(spies.runJobsTick).toHaveBeenCalledTimes(1);
+    expect(spies.syncLibrarySeries).not.toHaveBeenCalled();
+  });
+
+  it("refreshSeries returns the active job's message instead of queueing a second one", async () => {
+    state.granted = true;
+    spies.createAdminClient.mockReturnValue({});
+    spies.enqueueJob.mockResolvedValue({ job: { id: "j1" }, created: false });
+    spies.runJobsTick.mockResolvedValue({ jobs: [] });
+    const { refreshSeries } = await load<typeof import("@/app/(app)/discover/actions")>("@/app/(app)/discover/actions");
+    expect(await refreshSeries({ libraryId: LIB })).toEqual({ ok: true, message: "A series lookup is already running." });
   });
 });
 

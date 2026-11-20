@@ -2,15 +2,17 @@ import { BrandMark, Wordmark } from "@/components/brand";
 import { SpineRow } from "@/components/shelf";
 import { CreateLibraryForm } from "@/components/create-library-form";
 import { LibrarySwitcher } from "@/components/library-switcher";
+import { Suspense } from "react";
 import { BottomTabs, SidebarNav } from "@/components/nav";
 import { getLibraryContext } from "@/lib/library";
 import { signOut } from "../(auth)/actions";
 import { Button } from "@/components/ui/button";
 import { LocaleProvider } from "@/components/locale-provider";
 import { RegionStepForm } from "./region/region-step";
+import { BottomTabsWithBadge, FinishedJobNotice, SidebarNavWithBadge } from "./job-chrome";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const { libraries, current, region, locale } = await getLibraryContext();
+  const { user, libraries, current, region, locale } = await getLibraryContext();
 
   // One-time step for OAuth sign-ups and accounts from before regions existed. Nothing else renders until it is done,
   // so no page ever runs without a currency and locale; sign-out stays reachable.
@@ -76,7 +78,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <Wordmark />
         </div>
         <LibrarySwitcher libraries={libraries} currentId={current.id} />
-        <SidebarNav />
+        <Suspense fallback={<SidebarNav />}>
+          <SidebarNavWithBadge userId={user.id} />
+        </Suspense>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -87,11 +91,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </header>
         <main className="min-w-0 flex-1 px-4 pt-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-10 md:py-10 md:pb-10">
+          <Suspense fallback={null}>
+            <FinishedJobNotice userId={user.id} />
+          </Suspense>
           {children}
         </main>
       </div>
 
-      <BottomTabs />
+      <Suspense fallback={<BottomTabs />}>
+        <BottomTabsWithBadge userId={user.id} />
+      </Suspense>
     </div>
     </LocaleProvider>
   );

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SeriesApi } from "@/lib/metadata/hardcover-series";
-import { MAX_BOOK_LOOKUPS, groupByNamedSeries, needsDiscovery, syncLibrarySeries } from "./series-sync";
+import type { BookChange } from "@/lib/jobs/queue/types";
+import { MAX_BOOK_LOOKUPS, countSeriesWork, groupByNamedSeries, needsDiscovery, syncLibrarySeries } from "./series-sync";
 
 type Row = Record<string, unknown>;
 
@@ -340,6 +341,55 @@ describe("syncLibrarySeries: books with no series, no series name and no Hardcov
     expect(a.searchBooks).toHaveBeenCalledTimes(MAX_BOOK_LOOKUPS);
     expect(res).toMatchObject({ remaining: 5, done: false });
     expect(tables.books.filter((b) => b.series_checked_at).length).toBe(MAX_BOOK_LOOKUPS);
+  });
+});
+
+describe("syncLibrarySeries: undo log and the lifted caps", () => {
+  const bare = (over: Row = {}): Row => ({ id: "x1", library_id: LIB, title: "Dune", authors: ["Frank Herbert"], isbn13: "9780441172719", series_id: null, series_name: null, series_position: null, hardcover_id: null, series_checked_at: null, ...over });
+
+  it("reports before and after of only the fields it changed, for every changed book", async () => {
+    const { client, tables } = fakeAdmin({ books: [bare()], series: [], series_entries: [] });
+    const changes: BookChange[] = [];
+    const a = api({
+      bookByIsbn: vi.fn(async () => ({ hardcoverId: 11, title: "Dune", authors: ["Frank Herbert"] })) as never,
+      bookSeries: vi.fn(async (ids: number[]) => ids.map((id) => ({ bookId: id, title: null, series: [{ seriesId: 1150, name: "Dune", featured: true, position: 1, compilation: false }] }))) as never,
+    });
+    await syncLibrarySeries(client, LIB, { api: a, onChange: async (c) => void changes.push(...c) });
+    const seriesId = tables.series[0].id as string;
+    // Folded the way the job store folds them: first before, last after.
+    expect(changes).toEqual([
+      { bookId: "x1", before: { hardcover_id: null }, after: { hardcover_id: 11 } },
+      { bookId: "x1", before: { series_id: null }, after: { series_id: seriesId } },
+      { bookId: "x1", before: { series_name: null, series_position: null }, after: { series_name: "Dune", series_position: 1 } },
+    ]);
+  });
+
+  it("records nothing for a book it did not change", async () => {
+    const { client } = fakeAdmin({
+      books: [bare({ id: "t1", series_id: "s1", series_name: "Dune", series_position: 1, hardcover_id: 11, series_checked_at: "x" })],
+      series: [{ id: "s1", hardcover_id: 1150, name: "Dune", synced_at: new Date().toISOString() }],
+      series_entries: [],
+    });
+    const changes: BookChange[] = [];
+    await syncLibrarySeries(client, LIB, { api: api(), onChange: async (c) => void changes.push(...c) });
+    expect(changes).toEqual([]);
+  });
+
+  it("looks every book up when the caps are lifted", async () => {
+    const many = Array.from({ length: MAX_BOOK_LOOKUPS + 5 }, (_, i) => bare({ id: `m${i}`, title: `Book ${i}`, isbn13: null }));
+    const { client } = fakeAdmin({ books: many, series: [], series_entries: [] });
+    const a = api();
+    const res = await syncLibrarySeries(client, LIB, { api: a, maxBookLookups: Infinity, maxNameSearches: Infinity });
+    expect(a.searchBooks).toHaveBeenCalledTimes(MAX_BOOK_LOOKUPS + 5);
+    expect(res.remaining).toBe(0);
+  });
+
+  it("counts the work waiting: books without a series plus stale series", async () => {
+    const { client } = fakeAdmin({
+      books: [bare({ id: "n1" }), bare({ id: "n2" }), bare({ id: "l1", series_id: "s1", series_checked_at: "x" })],
+      series: [{ id: "s1", hardcover_id: 5, name: "Old", synced_at: null }],
+    });
+    expect(await countSeriesWork(client, LIB)).toBe(3);
   });
 });
 

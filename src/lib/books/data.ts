@@ -1,4 +1,5 @@
 import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import type { LibraryRole } from "@/lib/library";
 import { activeLoans, type LoanLite } from "@/lib/loans/rules";
@@ -331,8 +332,10 @@ export async function loadBookDetail(bookId: string, userId: string): Promise<Bo
 export async function loadDuplicateCandidates(
   libraryId: string,
   input: { title: string; isbn13: string | null },
+  /** A client to use instead of the signed-in person's (the background worker has no session). */
+  client?: SupabaseClient,
 ): Promise<ExistingBook[]> {
-  const supabase = await createClient();
+  const supabase = client ?? (await createClient());
   const found = new Map<string, ExistingBook>();
   const base = "id, title, authors, isbn13, cover_url, copies(edition_isbn)";
   const add = (rows: Json[] | null) => {

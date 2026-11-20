@@ -81,7 +81,7 @@ Migration `supabase/migrations/20261125000000_jobs.sql`:
 ## 7. What the user does once
 
 1. Turn on the **pg_cron** and **pg_net** extensions in the Supabase dashboard if they aren't on already. The migration does `create extension if not exists`, which may need dashboard permission.
-2. Add two **Vault** secrets: the app's production URL and `CRON_SECRET` (the same value as on Vercel).
+2. Add two **Vault** secrets (Dashboard > Project Settings > Vault > Add new secret), with exactly these names: `app_url` (the app's production URL, e.g. `https://your-app.vercel.app`) and `cron_secret` (the same value as `CRON_SECRET` on Vercel). Until both exist the minute schedule does nothing (it skips, no errors).
 3. Deploy, then apply the migration.
 
 ## Order

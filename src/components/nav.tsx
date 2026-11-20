@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, BookOpen, Compass, Library, Plus, User } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Compass, Library, Plus, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
@@ -10,18 +10,32 @@ const items = [
   { href: "/shelves", label: "Shelves", icon: Library },
   { href: "/add", label: "Add", icon: Plus, primary: true },
   { href: "/discover", label: "Discover", icon: Compass },
+  { href: "/activity", label: "Activity", icon: Activity },
   { href: "/settings", label: "Profile", icon: User },
 ] as const;
 
 /** The desktop sidebar has room for Stats; on phones it is reached from Profile, so the five tabs stay uncrowded. */
-const sidebarItems = [...items.slice(0, 4), { href: "/stats", label: "Stats", icon: BarChart3 }, items[4]] as const;
+const sidebarItems = [...items.slice(0, 5), { href: "/stats", label: "Stats", icon: BarChart3 }, items[5]] as const;
+
+/** Finished jobs nobody has opened yet, as a small count on the Activity item. Zero shows nothing. */
+function UnseenBadge({ count, className }: { count: number; className?: string }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className={cn("inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-gilt px-1.5 text-[0.6875rem] leading-none font-semibold text-background tabular-nums", className)}
+    >
+      <span aria-hidden>{count > 9 ? "9+" : count}</span>
+      <span className="sr-only">{count} finished, not yet reviewed</span>
+    </span>
+  );
+}
 
 function useActive() {
   const pathname = usePathname();
   return (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function BottomTabs() {
+export function BottomTabs({ unseen = 0 }: { unseen?: number }) {
   const isActive = useActive();
 
   return (
@@ -29,7 +43,7 @@ export function BottomTabs() {
       aria-label="Primary"
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
     >
-      <ul className="grid grid-cols-5 px-1">
+      <ul className="grid grid-cols-6 px-1">
         {items.map(({ href, label, icon: Icon, ...rest }) => {
           const active = isActive(href);
           const primary = "primary" in rest;
@@ -62,7 +76,10 @@ export function BottomTabs() {
                         active ? "opacity-100" : "opacity-0",
                       )}
                     />
-                    <Icon className="size-[1.375rem]" strokeWidth={active ? 2 : 1.6} aria-hidden />
+                    <span className="relative">
+                      <Icon className="size-[1.375rem]" strokeWidth={active ? 2 : 1.6} aria-hidden />
+                      {href === "/activity" && <UnseenBadge count={unseen} className="absolute -top-2 left-3 h-4 min-w-4 px-1 text-[0.625rem] ring-2 ring-background" />}
+                    </span>
                     {label}
                   </>
                 )}
@@ -75,7 +92,7 @@ export function BottomTabs() {
   );
 }
 
-export function SidebarNav() {
+export function SidebarNav({ unseen = 0 }: { unseen?: number }) {
   const isActive = useActive();
 
   return (
@@ -102,6 +119,7 @@ export function SidebarNav() {
                 />
                 <Icon className="size-[1.125rem]" strokeWidth={active ? 2 : 1.6} aria-hidden />
                 {label}
+                {href === "/activity" && <UnseenBadge count={unseen} className="ml-auto" />}
               </Link>
             </li>
           );

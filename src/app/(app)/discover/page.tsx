@@ -16,7 +16,8 @@ import { Locked } from "@/components/locked";
 import { PickCardsSkeleton } from "@/components/skeletons";
 import { EmptyState, PageHeader, SpineRow } from "@/components/shelf";
 import { getDeclined, getLibraryBooks, getLibraryIndex } from "./loaders";
-import { FindSeriesButton, SeriesSection } from "./series-section";
+import { loadActiveSeriesJob } from "@/lib/jobs/queue/queries";
+import { FindSeriesButton, SeriesJobStatus, SeriesSection } from "./series-section";
 import { DiscoverTabs } from "./discover-tabs";
 import { panelId, parseTab, tabId, type DiscoverTabId } from "./tab-ids";
 import { RecSection, type CapView, type ClientPick, type RecState } from "./rec-section";
@@ -78,6 +79,7 @@ function SeriesBody({
   canEditLibrary,
   syncConfigured,
   canSync,
+  activeJob,
 }: {
   libraryId: string;
   overview: SeriesOverview | null;
@@ -86,6 +88,8 @@ function SeriesBody({
   syncConfigured: boolean;
   /** Whether this person may start a series sync (full access). Without it they still see what others have synced. */
   canSync: boolean;
+  /** A series lookup that is queued or running for this library, which replaces the Find my series button. */
+  activeJob: { id: string; status: "queued" | "running"; processed: number; total: number; canCancel: boolean } | null;
 }) {
   if (failed || !overview) {
     return <p className="text-base text-muted-foreground">The series list could not be loaded. Refresh the page to try again.</p>;
@@ -114,12 +118,13 @@ function SeriesBody({
 
   return (
     <div className="flex flex-col gap-6">
+      {activeJob && <SeriesJobStatus job={activeJob} canCancel={activeJob.canCancel} />}
       {unsynced > 0 && (
         <div className="flex flex-col gap-3 rounded-[10px] border border-dashed border-input p-4">
           <p className="text-base">
             {unsynced} book{unsynced === 1 ? "" : "s"} {unsynced === 1 ? "hasn't" : "haven't"} been checked for a series yet.
           </p>
-          {canSync && syncConfigured ? <FindSeriesButton libraryId={libraryId} /> : syncNote}
+          {activeJob ? null : canSync && syncConfigured ? <FindSeriesButton libraryId={libraryId} /> : syncNote}
         </div>
       )}
       {withGaps.length > 0 && <SeriesSection libraryId={libraryId} gaps={withGaps} canEdit={canEditLibrary} canRefresh={syncConfigured && canSync} />}
@@ -163,7 +168,11 @@ async function SeriesPanel({ libraryId, userId, role }: { libraryId: string; use
   } catch {
     failed = true;
   }
-  return <SeriesBody libraryId={libraryId} overview={overview} failed={failed} canEditLibrary={canEdit(role)} syncConfigured={syncConfigured} canSync={fullAccess} />;
+  const job = await loadActiveSeriesJob(supabase, libraryId);
+  const activeJob = job
+    ? { id: job.id, status: (job.status === "queued" ? "queued" : "running") as "queued" | "running", processed: job.processed, total: job.total, canCancel: role === "owner" || job.userId === userId }
+    : null;
+  return <SeriesBody libraryId={libraryId} overview={overview} failed={failed} canEditLibrary={canEdit(role)} syncConfigured={syncConfigured} canSync={fullAccess} activeJob={activeJob} />;
 }
 
 /** The latest set of a scope, minus what is declined or already on the shelves, and today's refresh allowance. */
